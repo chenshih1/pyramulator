@@ -1,0 +1,39 @@
+[build-system]
+requires = ["scikit-build-core>=0.8", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pyramulator"
+version = "0.1.0"
+description = "Python bindings for Ramulator DRAM simulator"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "pyramulator contributors"}]
+keywords = ["dram", "simulator", "ramulator", "memory", "hardware"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+cmake.version = ">=3.15"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["pyramulator"]
+sdist.exclude = [
+    "/ramulator/",
+    "src/ramulator/trace_generator/",
+    "src/ramulator/cputraces/",
+    "src/ramulator/gem5-*.patch",
+    "/doc/",
+    "/build/",
+    "/dist/",
+    ".pytest_cache/",
+    ".hypothesis/",
+]

@@ -1,0 +1,25 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.so
+*.whl
+*.tar.gz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE / tooling
+.pytest_cache/
+.qoder/
+.hypothesis/
+.vscode/
+.idea/
