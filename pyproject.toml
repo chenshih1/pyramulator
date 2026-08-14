@@ -58,4 +58,14 @@ sdist.exclude = [
     ".venv/",
     ".pytest_cache/",
     ".hypothesis/",
+    # Ramulator is pulled in via the submodule or FetchContent at build
+    # time; only its configs are needed in-tree (bundled into the wheel).
+    "third_party/ramulator/cputraces/",
+    "third_party/ramulator/trace_generator/",
+    "third_party/ramulator/cpu.trace",
+    "third_party/ramulator/dram.trace",
+    "third_party/ramulator/gem5-*.patch",
+    "third_party/ramulator/plot.py",
+    "third_party/ramulator/test_*.py",
+    "third_party/ramulator/temp.txt",
 ]

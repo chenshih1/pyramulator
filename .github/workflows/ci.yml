@@ -28,3 +28,39 @@ jobs:
         run: mypy pyramulator/
       - name: Test
         run: pytest
+
+  sdist:
+    name: sdist build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --outdir dist
+      - name: Install from sdist in a fresh venv
+        run: |
+          python -m venv /tmp/sdist-venv
+          /tmp/sdist-venv/bin/pip install --no-cache-dir dist/*.tar.gz
+          # Run outside the repo so the source tree does not shadow the
+          # installed package
+          cd /tmp
+          /tmp/sdist-venv/bin/python -c "
+          from pyramulator import Config, MemorySystem
+          mem = MemorySystem(Config(standard='DDR4', speed='DDR4_2400R',
+                                     org='DDR4_4Gb_x8'))
+          mem.send_read(0x1000)
+          mem.run_until_idle()
+          assert mem.get_stats()['read_requests'] == 1
+          print('sdist install OK')
+          "
+      - name: Size check
+        run: |
+          size=$(du -m dist/*.tar.gz | cut -f1)
+          echo "sdist size: ${size}MB"
+          test "$size" -lt 50

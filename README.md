@@ -1,5 +1,9 @@
 # pyramulator
 
+[![CI](https://img.shields.io/github/actions/workflow/status/chenshih1/pyramulator/ci.yml?branch=master&label=CI)](https://github.com/chenshih1/pyramulator/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+
 Python bindings for the [Ramulator](https://github.com/CMU-SAFARI/ramulator)
 DRAM simulator.
 
