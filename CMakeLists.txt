@@ -66,6 +66,15 @@ target_include_directories(_core PRIVATE ${RAMULATOR_SRC})
 target_compile_definitions(_core PRIVATE RAMULATOR)
 target_compile_options(_core PRIVATE -O3)
 
+# ramulator's StatType.h uses uintN_t without including <cstdint>; it
+# compiles by accident on some toolchains via transitive includes but fails
+# on others. Force the header in without modifying ramulator sources.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(_core PRIVATE -include cstdint)
+elseif(MSVC)
+  target_compile_options(_core PRIVATE /FI cstdint)
+endif()
+
 install(TARGETS _core DESTINATION pyramulator)
 
 # Ship the ramulator reference configs so Config.from_file keeps working
