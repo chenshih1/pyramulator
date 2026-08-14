@@ -1,192 +1,9 @@
+"""MemorySystem core simulation tests."""
+
 import pytest
-from pyramulator import (
-    Config, MemorySystem, RequestType, RequestInfo,
-    supported_standards, supported_speeds, supported_orgs,
-    theoretical_bandwidth,
-)
-from pyramulator.configs import show
 
+from pyramulator import Config, MemorySystem, RequestType
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def ddr4_config():
-    return Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
-
-
-@pytest.fixture
-def ddr3_config():
-    return Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8")
-
-
-# ---------------------------------------------------------------------------
-# Config tests
-# ---------------------------------------------------------------------------
-
-class TestConfig:
-    def test_kwargs(self, ddr4_config):
-        assert ddr4_config["standard"] == "DDR4"
-        assert ddr4_config["speed"] == "DDR4_2400R"
-        assert "channels" in ddr4_config
-
-    def test_defaults_channels_ranks(self):
-        cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        assert cfg["channels"] == "1"
-        assert cfg["ranks"] == "1"
-
-    def test_explicit_channels(self):
-        cfg = Config(standard="DDR4", channels=4, ranks=2,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        assert cfg["channels"] == "4"
-        assert cfg["ranks"] == "2"
-
-    def test_from_file(self):
-        path = "/home/chens/workspace/pyramulator/src/ramulator/configs/DDR4-config.cfg"
-        cfg = Config.from_file(path)
-        assert cfg["standard"] == "DDR4"
-        assert cfg["channels"] == "1"
-
-    def test_from_file_with_overrides(self):
-        path = "/home/chens/workspace/pyramulator/src/ramulator/configs/DDR4-config.cfg"
-        cfg = Config.from_file(path, channels=4, ranks=2)
-        assert cfg["channels"] == "4"
-        assert cfg["ranks"] == "2"
-        assert cfg["standard"] == "DDR4"
-
-    def test_validate_valid(self, ddr4_config):
-        assert ddr4_config.validate() is True
-
-    def test_validate_bad_standard(self):
-        cfg = Config(standard="DDR5", speed="x", org="y")
-        with pytest.raises(ValueError, match="unsupported standard"):
-            cfg.validate()
-
-    def test_validate_bad_speed(self):
-        cfg = Config(standard="DDR4", speed="DDR4_9999X", org="DDR4_4Gb_x8")
-        with pytest.raises(ValueError, match="invalid speed"):
-            cfg.validate()
-
-    def test_validate_bad_org(self):
-        cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_999Gb_x8")
-        with pytest.raises(ValueError, match="invalid org"):
-            cfg.validate()
-
-    def test_validate_bad_channels(self):
-        cfg = Config(standard="DDR4", channels=3,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        with pytest.raises(ValueError, match="power of 2"):
-            cfg.validate()
-
-    def test_repr(self, ddr4_config):
-        r = repr(ddr4_config)
-        assert "DDR4" in r
-        assert "DDR4_2400R" in r
-
-    def test_set_overwrites(self):
-        cfg = Config(standard="DDR4", channels=1,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        cfg.set("channels", "8")
-        assert cfg["channels"] == "8"
-
-
-# ---------------------------------------------------------------------------
-# Configs module tests
-# ---------------------------------------------------------------------------
-
-class TestConfigsModule:
-    def test_supported_standards(self):
-        stds = supported_standards()
-        assert "DDR4" in stds
-        assert "HBM" in stds
-        assert "SALP-1" in stds
-        assert len(stds) == 11
-
-    def test_supported_speeds(self):
-        speeds = supported_speeds("DDR4")
-        assert "DDR4_2400R" in speeds
-        assert len(speeds) > 0
-
-    def test_supported_orgs(self):
-        orgs = supported_orgs("DDR4")
-        assert "DDR4_4Gb_x8" in orgs
-
-    def test_salp_variants_share_table(self):
-        assert supported_speeds("SALP-1") == supported_speeds("SALP-2")
-        assert supported_orgs("SALP-1") == supported_orgs("SALP-MASA")
-
-    def test_show(self, capsys):
-        show("DDR4")
-        captured = capsys.readouterr()
-        assert "DDR4_2400R" in captured.out
-
-
-# ---------------------------------------------------------------------------
-# RequestInfo tests
-# ---------------------------------------------------------------------------
-
-class TestRequestInfo:
-    def test_latency_property(self):
-        info = RequestInfo(addr=0x1000, type=RequestType.READ,
-                           arrive=10, depart=50)
-        assert info.latency == 40
-
-    def test_fields(self):
-        info = RequestInfo(addr=0x2000, type=RequestType.WRITE,
-                           arrive=5, depart=15)
-        assert info.addr == 0x2000
-        assert info.type == RequestType.WRITE
-
-
-# ---------------------------------------------------------------------------
-# theoretical_bandwidth tests
-# ---------------------------------------------------------------------------
-
-class TestTheoreticalBandwidth:
-    def test_ddr4_2400_1ch(self):
-        cfg = Config(standard="DDR4", channels=1,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        bw = theoretical_bandwidth(cfg)
-        assert bw == pytest.approx(19.2, rel=0.01)
-
-    def test_ddr4_2400_2ch(self):
-        cfg = Config(standard="DDR4", channels=2,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        bw = theoretical_bandwidth(cfg)
-        assert bw == pytest.approx(38.4, rel=0.01)
-
-    def test_ddr3_1600_1ch(self):
-        cfg = Config(standard="DDR3", channels=1,
-                     speed="DDR3_1600K", org="DDR3_2Gb_x8")
-        bw = theoretical_bandwidth(cfg)
-        assert bw == pytest.approx(12.8, rel=0.01)
-
-    def test_gddr5_qdr(self):
-        cfg = Config(standard="GDDR5", channels=1,
-                     speed="GDDR5_6000", org="GDDR5_8Gb_x32")
-        bw = theoretical_bandwidth(cfg)
-        # GDDR5-6000: 6000 MT/s * 4 bytes (32-bit) = 24 GB/s per channel
-        assert bw == pytest.approx(24.0, rel=0.01)
-
-    def test_scales_with_channels(self):
-        cfg1 = Config(standard="DDR4", channels=1,
-                      speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        cfg4 = Config(standard="DDR4", channels=4,
-                      speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        assert theoretical_bandwidth(cfg4) == pytest.approx(
-            4 * theoretical_bandwidth(cfg1), rel=0.01)
-
-    def test_accepts_dict(self):
-        bw = theoretical_bandwidth(
-            {"standard": "DDR4", "channels": "1",
-             "speed": "DDR4_2400R", "org": "DDR4_4Gb_x8"})
-        assert bw > 0
-
-
-# ---------------------------------------------------------------------------
-# MemorySystem core tests
-# ---------------------------------------------------------------------------
 
 class TestMemorySystem:
     def test_create(self, ddr4_config):
@@ -290,10 +107,6 @@ class TestMemorySystem:
         assert len(results) == 4
 
 
-# ---------------------------------------------------------------------------
-# Multi-standard tests
-# ---------------------------------------------------------------------------
-
 class TestMultiStandard:
     @pytest.mark.parametrize("standard,speed,org", [
         ("DDR3", "DDR3_1600K", "DDR3_2Gb_x8"),
@@ -320,10 +133,6 @@ class TestMultiStandard:
         mem.run_until_idle()
         assert len(results) == 16
 
-
-# ---------------------------------------------------------------------------
-# Benchmark integration tests
-# ---------------------------------------------------------------------------
 
 class TestBenchmark:
     def test_sequential_latency(self, ddr4_config):
@@ -435,3 +244,160 @@ class TestBenchmark:
         bw1 = measure_bw(1)
         bw2 = measure_bw(2)
         assert bw2 > bw1 * 1.5
+
+
+class TestStats:
+    def test_get_stats_dict(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        mem.reset_stats()
+        mem.send_reads_range(0, 16, 64)
+        mem.run_until_idle()
+        stats = mem.get_stats()
+        assert stats["read_requests"] == 16
+        assert stats["read_latency_sum_0"] > 0
+        assert stats["dram_cycles"] > 0
+
+    def test_reset_stats(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        mem.send_read(0x1000)
+        mem.run_until_idle()
+        mem.reset_stats()
+        stats = mem.get_stats()
+        assert stats["read_requests"] == 0
+        assert stats["dram_cycles"] == 0
+
+    def test_instances_isolated(self, ddr4_config):
+        m1 = MemorySystem(ddr4_config)
+        m2 = MemorySystem(ddr4_config)
+        m1.send_read(0x1000)
+        m1.run_until_idle()
+        m2.send_read(0x1000)
+        m2.run_until_idle()
+        m2.reset_stats()
+        assert m1.get_stats()["read_requests"] == 1
+        assert m2.get_stats()["read_requests"] == 0
+
+    def test_module_level_requires_single_instance(self, ddr4_config):
+        import gc
+        from pyramulator import get_stats
+        mem = MemorySystem(ddr4_config)
+        try:
+            mem2 = MemorySystem(ddr4_config)
+            with pytest.raises(RuntimeError, match="exactly one live"):
+                get_stats()
+        finally:
+            del mem2
+        del mem
+        gc.collect()
+        mem3 = MemorySystem(ddr4_config)
+        try:
+            stats = get_stats()
+            assert "read_requests" in stats
+        finally:
+            del mem3
+            gc.collect()
+
+
+class TestRangeSend:
+    def test_reads_range(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        completed = []
+        accepted = mem.send_reads_range(0, 32, 64,
+                                        callback=lambda i: completed.append(i))
+        assert all(accepted)
+        mem.flush()
+        assert len(completed) == 32
+        assert completed[0].addr == 0
+        assert completed[31].addr == 31 * 64
+
+    def test_reads_range_default_stride(self, ddr4_config):
+        """Stride defaults to the cacheline."""
+        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400",
+                     org="LPDDR4_8Gb_x16")
+        mem = MemorySystem(cfg, cacheline=32)
+        completed = []
+        mem.send_reads_range(0, 8, callback=lambda i: completed.append(i))
+        mem.flush()
+        assert len(completed) == 8
+        assert completed[1].addr == 32
+
+    def test_writes_range(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        completed = []
+        accepted = mem.send_writes_range(0, 8, 64,
+                                         callback=lambda i: completed.append(i))
+        assert all(accepted)
+        assert len(completed) == 8
+        assert all(i.type == RequestType.WRITE for i in completed)
+
+    def test_core_id_in_request_info(self, ddr4_config):
+        mem = MemorySystem(ddr4_config, num_cores=4)
+        infos = []
+        mem.send_read(0x1000, core_id=2,
+                      callback=lambda i: infos.append(i))
+        mem.send_read(0x2000, core_id=3,
+                      callback=lambda i: infos.append(i))
+        mem.run_until_idle()
+        assert {i.core_id for i in infos} == {2, 3}
+        assert infos[0].core_id == 2
+
+    def test_flush_drains_writes(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        mem.send_writes([i * 64 for i in range(32)])
+        mem.flush()
+        assert mem.pending == 0
+
+    def test_callback_exception_keeps_dispatching(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        seen = []
+
+        def bad(info):
+            raise RuntimeError("boom")
+
+        def good(info):
+            seen.append(info.addr)
+
+        mem.send_read(0x0, callback=bad)
+        mem.send_read(0x40, callback=good)
+        with pytest.raises(RuntimeError, match="boom"):
+            mem.run_until_idle()
+        assert seen == [0x40]
+
+
+class TestBlockingSend:
+    def test_blocking_read(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        results = []
+        waited = mem.send_read_blocking(0x1000,
+                                        callback=lambda i: results.append(i))
+        assert waited >= 0
+        mem.run_until_idle()
+        assert len(results) == 1
+
+    def test_blocking_saturation(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        results = []
+        total_waited = 0
+        for i in range(64):
+            total_waited += mem.send_read_blocking(
+                i * 64, callback=lambda i: results.append(i))
+        mem.run_until_idle()
+        assert total_waited >= 0
+        assert len(results) == 64
+
+
+class TestCachelineValidation:
+    def test_not_power_of_two(self, ddr4_config):
+        with pytest.raises(ValueError, match="power of two"):
+            MemorySystem(ddr4_config, cacheline=100)
+
+    def test_too_small_for_standard(self):
+        cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
+        with pytest.raises(ValueError, match="multiple of the DDR4"):
+            MemorySystem(cfg, cacheline=32)
+
+    def test_lpddr4_small_cacheline_ok(self):
+        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400",
+                     org="LPDDR4_8Gb_x16")
+        mem = MemorySystem(cfg, cacheline=32)
+        assert mem.tck > 0

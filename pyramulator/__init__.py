@@ -1,29 +1,68 @@
 """Pyramulator: Python bindings for Ramulator DRAM simulator."""
 
+from __future__ import annotations
+
 import logging
-from typing import NamedTuple
+import os
+from typing import Any, Callable, Iterable, NamedTuple
 
 logger = logging.getLogger(__name__)
 from pyramulator._core import (
     Config as _Config,
     MemorySystem as _MemorySystem,
     RequestType,
+    get_stats as _get_stats,
+    reset_stats as _reset_stats,
 )
 from pyramulator.configs import (
     supported_standards,
     supported_speeds,
     supported_orgs,
+    config_dir,
+    estimate_capacity,
+    theoretical_bandwidth,
+    MIN_CACHELINE,
     _standard_key,
     SPEED_GRADES,
     ORGANIZATIONS,
+)
+from pyramulator.metrics import (
+    avg_read_latency,
+    row_hit_rate,
+    measured_bandwidth,
+    summarize_metrics,
+)
+from pyramulator.workload import addresses, read_write_mix
+from pyramulator.benchmark import (
+    benchmark_latency,
+    benchmark_bandwidth,
+    benchmark_all,
 )
 
 __all__ = [
     "Config", "MemorySystem", "RequestType", "RequestInfo",
     "supported_standards", "supported_speeds", "supported_orgs",
+    "config_dir", "estimate_capacity", "get_stats", "reset_stats",
     "theoretical_bandwidth",
+    "avg_read_latency", "row_hit_rate", "measured_bandwidth",
+    "summarize_metrics",
+    "addresses", "read_write_mix",
+    "benchmark_latency", "benchmark_bandwidth", "benchmark_all",
 ]
 __version__ = "0.1.0"
+
+
+def get_stats() -> dict[str, object]:
+    """Return all Ramulator statistics as a {name: value} dict.
+
+    Statistics are process-global in Ramulator: values reflect the most
+    recent MemorySystem instance(s) created."""
+    return _get_stats()
+
+
+def reset_stats() -> None:
+    """Reset all Ramulator statistics to zero (e.g. per simulation phase)."""
+    _reset_stats()
 
 
 class RequestInfo(NamedTuple):
@@ -32,15 +71,19 @@ class RequestInfo(NamedTuple):
     type: RequestType
     arrive: int
     depart: int
+    core_id: int = 0
 
     @property
-    def latency(self):
+    def latency(self) -> int:
         """Request latency in DRAM clock cycles."""
         return self.depart - self.arrive
 
 
 class Config(_Config):
     """DRAM configuration. Accepts a config file path or keyword arguments.
+
+    Only Ramulator's public API is used (add/contains/set_core_num), matching
+    how gem5 drives Ramulator; there is no value-overwrite setter.
 
     Examples:
         cfg = Config("ddr4.cfg")
@@ -50,9 +93,10 @@ class Config(_Config):
 
     _DEFAULTS = {"channels": "1", "ranks": "1"}
 
-    def __init__(self, config_file=None, **kwargs):
+    def __init__(self, config_file: str | os.PathLike | None = None,
+                 **kwargs: Any) -> None:
         if config_file is not None:
-            super().__init__(config_file)
+            super().__init__(str(config_file))
         else:
             super().__init__()
         for key, value in kwargs.items():
@@ -63,16 +107,27 @@ class Config(_Config):
         logger.debug("Config created: %s", self)
 
     @classmethod
-    def from_file(cls, path, **overrides):
-        """Load config from file, optionally overriding specific fields."""
-        obj = cls(config_file=path)
-        for key, value in overrides.items():
-            obj.set(key, str(value))
+    def from_file(cls, path: str | os.PathLike, **overrides: Any) -> Config:
+        """Load config from a Ramulator .cfg file, optionally overriding fields.
+
+        The file is parsed in Python (simple ``key = value`` format), merged
+        with the overrides, and applied to a fresh Config via ``add`` — no
+        value overwriting on an existing Config is needed.
+        """
+        options: dict[str, str] = {}
+        with open(path, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.split("#", 1)[0].strip()
+                if not line or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                options[key.strip()] = value.strip()
+        options.update({k: str(v) for k, v in overrides.items()})
         if overrides:
             logger.debug("Config overrides from %s: %s", path, overrides)
-        return obj
+        return cls(**options)
 
-    def validate(self):
+    def validate(self) -> bool:
         """Check that standard/speed/org are valid. Raises ValueError if not."""
         standard = self["standard"]
         if not standard:
@@ -104,71 +159,12 @@ class Config(_Config):
 
         return True
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         std = self["standard"] or "?"
         speed = self["speed"] or "?"
         org = self["org"] or "?"
         ch = self["channels"]
         return f"Config(standard={std!r}, speed={speed!r}, org={org!r}, channels={ch})"
-
-
-# Data rate in MT/s (mega-transfers per second) per speed grade prefix.
-# Used for theoretical bandwidth estimation.
-_DATA_RATES = {
-    "DDR3_800": 800, "DDR3_1066": 1066, "DDR3_1333": 1333,
-    "DDR3_1600": 1600, "DDR3_1866": 1866, "DDR3_2133": 2133,
-    "DDR4_1600": 1600, "DDR4_1866": 1866, "DDR4_2133": 2133,
-    "DDR4_2400": 2400, "DDR4_3200": 3200,
-    "LPDDR3_1333": 1333, "LPDDR3_1600": 1600,
-    "LPDDR3_1866": 1866, "LPDDR3_2133": 2133,
-    "LPDDR4_1600": 1600, "LPDDR4_2400": 2400, "LPDDR4_3200": 3200,
-    "GDDR5_4000": 4000, "GDDR5_4500": 4500, "GDDR5_5000": 5000,
-    "GDDR5_5500": 5500, "GDDR5_6000": 6000,
-    "GDDR5_6500": 6500, "GDDR5_7000": 7000,
-    "WideIO_200": 200, "WideIO_266": 266,
-    "WideIO2_800": 800, "WideIO2_1066": 1066,
-    "HBM_1Gbps": 1000,
-    "SALP_800": 800, "SALP_1066": 1066, "SALP_1333": 1333,
-    "SALP_1600": 1600, "SALP_1866": 1866, "SALP_2133": 2133,
-}
-
-# Channel width in bits per standard (from DRAM spec).
-_CHANNEL_WIDTHS = {
-    "DDR3": 64, "DDR4": 64,
-    "LPDDR3": 32, "LPDDR4": 16,
-    "GDDR5": 32, "WideIO": 128,
-    "WideIO2": 128, "HBM": 128,
-    "SALP": 64,
-}
-
-
-def theoretical_bandwidth(config, cacheline=64):
-    """Estimate peak theoretical bandwidth in GB/s for a config.
-
-    Uses data rate × channel width × channels. Does not account for
-    protocol overhead, refresh, or timing constraints.
-    """
-    if isinstance(config, dict):
-        config = Config(**config)
-
-    standard = config["standard"]
-    speed = config["speed"]
-    channels = int(config["channels"])
-
-    key = _standard_key(standard)
-    width_bits = _CHANNEL_WIDTHS.get(key, 64)
-
-    # Strip trailing letter suffixes from speed grade: "DDR4_2400R" → "DDR4_2400"
-    parts = speed.split("_")
-    prefix = parts[0] + "_" + parts[1].rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    data_rate = _DATA_RATES.get(prefix, 0)
-    if data_rate == 0:
-        raise ValueError(f"unknown data rate for speed '{speed}'")
-
-    transfers_per_sec = data_rate * 1e6
-    bytes_per_transfer = width_bits // 8
-    peak_gbs = transfers_per_sec * bytes_per_transfer * channels / 1e9
-    return peak_gbs
 
 
 class MemorySystem:
@@ -182,96 +178,287 @@ class MemorySystem:
             mem.run(1000)
     """
 
-    def __init__(self, config, cacheline=64, num_cores=1):
+    def __init__(self, config: Config | _Config | dict[str, Any],
+                 cacheline: int = 64, num_cores: int = 1) -> None:
         if isinstance(config, dict):
             config = Config(**config)
+        standard = config["standard"]
+        min_cacheline = MIN_CACHELINE.get(_standard_key(standard), 8)
+        if cacheline <= 0 or (cacheline & (cacheline - 1)) != 0:
+            raise ValueError(
+                f"cacheline must be a power of two, got {cacheline}")
+        if cacheline < min_cacheline or cacheline % min_cacheline != 0:
+            raise ValueError(
+                f"cacheline {cacheline} is not a multiple of the {standard} "
+                f"minimum channel unit ({min_cacheline} bytes)")
+        self._config = config
+        self._cacheline = cacheline
         self._impl = _MemorySystem(config, cacheline, num_cores)
         self._clk = 0
         logger.debug("MemorySystem created: tck=%.3fns, cacheline=%d, cores=%d",
                      self.tck, cacheline, num_cores)
 
     @property
-    def tck(self):
+    def tck(self) -> float:
         """Clock period in nanoseconds."""
         return self._impl.tck
 
     @property
-    def clk(self):
+    def clk(self) -> int:
         """Current cycle count."""
         return self._clk
 
     @property
-    def pending(self):
+    def pending(self) -> int:
         """Number of in-flight requests."""
         return self._impl.pending
 
-    def tick(self):
+    @property
+    def capacity(self) -> int:
+        """Nominal DRAM capacity in bytes (from the org configuration)."""
+        return estimate_capacity(
+            self._config["standard"], self._config["org"],
+            channels=int(self._config["channels"]),
+            ranks=int(self._config["ranks"]))
+
+    def tick(self) -> None:
         """Advance simulation by one DRAM clock cycle."""
         self._impl.tick()
+        self._drain_completed()
         self._clk += 1
 
-    def run(self, cycles):
-        """Advance simulation by the given number of cycles."""
-        for _ in range(cycles):
-            self._impl.tick()
-        self._clk += cycles
+    def _drain_completed(self):
+        """Flush completion events recorded by C++ into user callbacks.
 
-    def run_until_idle(self, max_cycles=1_000_000):
+        Completions are batched in C++ (no GIL round-trip per event); the
+        Python callbacks run here, with the GIL already held, once per batch.
+        """
+        self._dispatch(self._impl.drain_completed())
+
+    def _dispatch(self, events):
+        """Invoke user callbacks for a batch of completion events.
+
+        Exception-safe: if a callback raises, the remaining events in the
+        batch are still delivered, then the first exception is re-raised.
+        """
+        first_exc = None
+        for addr, type_, arrive, depart, core_id, cb in events:
+            try:
+                cb(addr, type_, arrive, depart, core_id)
+            except BaseException as exc:
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise first_exc
+
+    def run(self, cycles: int) -> None:
+        """Advance simulation by the given number of cycles.
+
+        The tick loop runs inside C++ and completion events are dispatched in
+        one batch, so long runs avoid per-cycle Python overhead.
+        """
+        n, events = self._impl.run(cycles)
+        self._clk += n
+        self._dispatch(events)
+
+    def run_until_idle(self, max_cycles: int = 1_000_000) -> int:
         """Tick until no requests are pending or max_cycles is reached."""
-        for _ in range(max_cycles):
-            self._impl.tick()
-            self._clk += 1
-            if self._impl.pending == 0:
-                break
+        n, events = self._impl.run_until_idle(max_cycles)
+        self._clk += n
+        self._dispatch(events)
         return self._clk
 
-    def send(self, addr, request_type, core_id=0, callback=None):
+    def flush(self, max_cycles: int = 1_000_000) -> int:
+        """Write barrier: run until every accepted request — including
+        writes, which Ramulator otherwise completes silently — has been
+        serviced by the DRAM. Returns the cycle count."""
+        return self.run_until_idle(max_cycles)
+
+    def send(self, addr: int, request_type: RequestType, core_id: int = 0,
+             callback: Callable[[RequestInfo], None] | None = None) -> bool:
         """Send a memory request. Returns True if accepted, False if queue full.
 
-        callback receives a RequestInfo(addr, type, arrive, depart) namedtuple.
+        callback receives a RequestInfo(addr, type, arrive, depart, core_id)
+        namedtuple. Read completions are delivered by Ramulator itself. Like
+        gem5, a write request is considered complete upon acceptance:
+        Ramulator has no write-completion callback upstream, so WRITE
+        callbacks fire immediately when the request is accepted.
         """
+        if request_type == RequestType.WRITE:
+            accepted = self._impl.send(addr, request_type, core_id, None)
+            if accepted and callback is not None:
+                callback(RequestInfo(addr, request_type, self.clk, self.clk,
+                                     core_id))
+            return accepted
+
         if callback is not None:
             user_cb = callback
 
-            def _wrap(addr_, type_, arrive, depart):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart))
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
+                                    core_id_))
 
             return self._impl.send(addr, request_type, core_id, _wrap)
         return self._impl.send(addr, request_type, core_id, None)
 
-    def send_read(self, addr, core_id=0, callback=None):
+    def send_read(self, addr: int, core_id: int = 0,
+                  callback: Callable[[RequestInfo], None] | None = None
+                  ) -> bool:
         """Send a READ request."""
         return self.send(addr, RequestType.READ, core_id, callback)
 
-    def send_write(self, addr, core_id=0, callback=None):
+    def send_write(self, addr: int, core_id: int = 0,
+                   callback: Callable[[RequestInfo], None] | None = None
+                   ) -> bool:
         """Send a WRITE request."""
         return self.send(addr, RequestType.WRITE, core_id, callback)
 
-    def send_reads(self, addrs, core_id=0, callback=None):
-        """Send multiple READ requests. Returns list of accept booleans."""
-        return [self.send_read(a, core_id, callback) for a in addrs]
+    def send_reads(self, addrs: Iterable[int], core_id: int = 0,
+                   callback: Callable[[RequestInfo], None] | None = None
+                   ) -> list[bool]:
+        """Send multiple READ requests in one C++ call. Returns accept flags.
 
-    def send_writes(self, addrs, core_id=0, callback=None):
-        """Send multiple WRITE requests. Returns list of accept booleans."""
-        return [self.send_write(a, core_id, callback) for a in addrs]
+        Completions arrive through callback as individual RequestInfo objects
+        once the simulation advances (tick/run)."""
+        if callback is not None:
+            user_cb = callback
 
-    def set_write_queue_watermark(self, high=0.8, low=0.2):
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
+                                    core_id_))
+
+            return list(self._impl.send_batch(
+                addrs, RequestType.READ, core_id, _wrap))
+        return list(self._impl.send_batch(
+            addrs, RequestType.READ, core_id, None))
+
+    def send_writes(self, addrs: Iterable[int], core_id: int = 0,
+                    callback: Callable[[RequestInfo], None] | None = None
+                    ) -> list[bool]:
+        """Send multiple WRITE requests in one C++ call. Returns accept flags.
+
+        Like gem5, writes complete upon acceptance, so accepted requests fire
+        callback immediately."""
+        accepted = list(self._impl.send_batch(
+            addrs, RequestType.WRITE, core_id, None))
+        if callback is not None:
+            for addr, ok in zip(addrs, accepted):
+                if ok:
+                    callback(RequestInfo(addr, RequestType.WRITE,
+                                         self.clk, self.clk, core_id))
+        return accepted
+
+    def send_reads_range(self, start: int, count: int,
+                         stride: int | None = None, core_id: int = 0,
+                         callback: Callable[[RequestInfo], None] | None = None
+                         ) -> list[bool]:
+        """Send count READ requests at start, start+stride, ... in one call.
+
+        Stride defaults to the memory system's cacheline. Avoids
+        materializing the address list in Python; returns accept flags.
+        """
+        if stride is None:
+            stride = self._cacheline
+        if callback is not None:
+            user_cb = callback
+
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
+                                    core_id_))
+
+            return list(self._impl.send_range(
+                start, count, stride, RequestType.READ, core_id, _wrap))
+        return list(self._impl.send_range(
+            start, count, stride, RequestType.READ, core_id, None))
+
+    def send_writes_range(self, start: int, count: int,
+                          stride: int | None = None, core_id: int = 0,
+                          callback: Callable[[RequestInfo], None] | None = None
+                          ) -> list[bool]:
+        """Send count WRITE requests at start, start+stride, ... in one call.
+
+        Stride defaults to the memory system's cacheline. Writes complete
+        upon acceptance, so accepted requests fire callback immediately."""
+        if stride is None:
+            stride = self._cacheline
+        accepted = list(self._impl.send_range(
+            start, count, stride, RequestType.WRITE, core_id, None))
+        if callback is not None:
+            for i, ok in enumerate(accepted):
+                if ok:
+                    callback(RequestInfo(start + i * stride,
+                                         RequestType.WRITE,
+                                         self.clk, self.clk, core_id))
+        return accepted
+
+    def get_stats(self) -> dict[str, object]:
+        """Return this memory system's statistics as a {name: value} dict.
+
+        Includes bandwidth, read/write latency, row hits/misses, queue
+        depths, etc."""
+        return self._impl.get_stats()
+
+    def reset_stats(self) -> None:
+        """Reset this memory system's statistics to zero (e.g. per phase)."""
+        self._impl.reset_stats()
+
+    def metrics(self) -> dict[str, float]:
+        """Derived performance summary computed from live statistics.
+
+        Returns avg read latency (cycles and ns), row-buffer hit rate,
+        sustained bandwidth, and request/cycle counts — usable mid-run
+        without calling finish()."""
+        return summarize_metrics(self.get_stats(), self._cacheline, self.tck)
+
+    def send_blocking(self, addr: int, request_type: RequestType,
+                      core_id: int = 0,
+                      callback: Callable[[RequestInfo], None] | None = None,
+                      max_wait: int = 1_000_000) -> int:
+        """Send a request, ticking until it is accepted.
+
+        Returns the number of cycles waited. Raises RuntimeError if the
+        request is not accepted within max_wait cycles."""
+        waited = 0
+        while not self.send(addr, request_type, core_id, callback):
+            self.tick()
+            waited += 1
+            if waited >= max_wait:
+                raise RuntimeError(
+                    f"request to 0x{addr:x} not accepted within "
+                    f"{max_wait} cycles (queue still full)")
+        return waited
+
+    def send_read_blocking(self, addr: int, core_id: int = 0,
+                           callback: Callable[[RequestInfo], None] | None = None,
+                           max_wait: int = 1_000_000) -> int:
+        """Blocking variant of send_read. Returns cycles waited."""
+        return self.send_blocking(addr, RequestType.READ, core_id, callback,
+                                  max_wait)
+
+    def send_write_blocking(self, addr: int, core_id: int = 0,
+                            callback: Callable[[RequestInfo], None] | None = None,
+                            max_wait: int = 1_000_000) -> int:
+        """Blocking variant of send_write. Returns cycles waited."""
+        return self.send_blocking(addr, RequestType.WRITE, core_id, callback,
+                                  max_wait)
+
+    def set_write_queue_watermark(self, high: float = 0.8, low: float = 0.2) -> None:
         """Set write queue watermarks that control read/write scheduling."""
         self._impl.set_high_writeq_watermark(high)
         self._impl.set_low_writeq_watermark(low)
 
-    def finish(self):
+    def finish(self) -> None:
         """Finalize simulation and flush statistics."""
         logger.debug("MemorySystem finished: %d cycles simulated", self._clk)
         self._impl.finish()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (f"MemorySystem(tck={self.tck:.3f}ns, clk={self._clk}, "
                 f"pending={self.pending})")
 
-    def __enter__(self):
+    def __enter__(self) -> MemorySystem:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> bool:
         self.finish()
         return False

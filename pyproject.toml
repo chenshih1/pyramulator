@@ -7,7 +7,7 @@ name = "pyramulator"
 version = "0.1.0"
 description = "Python bindings for Ramulator DRAM simulator"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [{name = "pyramulator contributors"}]
 keywords = ["dram", "simulator", "ramulator", "memory", "hardware"]
@@ -22,18 +22,17 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest"]
 
+[tool.pytest.ini_options]
+testpaths = ["test"]
+
 [tool.scikit-build]
 cmake.version = ">=3.15"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pyramulator"]
 sdist.exclude = [
-    "/ramulator/",
-    "src/ramulator/trace_generator/",
-    "src/ramulator/cputraces/",
-    "src/ramulator/gem5-*.patch",
-    "/doc/",
     "/build/",
     "/dist/",
+    ".venv/",
     ".pytest_cache/",
     ".hypothesis/",
 ]

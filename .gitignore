@@ -6,6 +6,9 @@ dist/
 *.whl
 *.tar.gz
 
+# Virtual envs
+.venv/
+
 # Python
 __pycache__/
 *.py[cod]

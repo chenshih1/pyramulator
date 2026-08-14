@@ -8,7 +8,35 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(pybind11 CONFIG REQUIRED)
 
-set(RAMULATOR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ramulator/src)
+# ---------------------------------------------------------------------------
+# Ramulator is an external dependency. Prefer the git submodule at
+# third_party/ramulator; fall back to fetching from upstream when it is
+# absent (e.g. when building from an sdist). The bindings use only
+# ramulator's public API (same calls as its own Gem5Wrapper), so no
+# ramulator source is modified.
+# ---------------------------------------------------------------------------
+set(RAMULATOR_TAG "214f635845214adf030367939655d172ef0fed5f")
+
+set(RAMULATOR_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ramulator)
+if(NOT EXISTS ${RAMULATOR_SOURCE_DIR}/src/Config.h)
+  message(STATUS "ramulator submodule not found, fetching from upstream")
+  include(FetchContent)
+  FetchContent_Declare(
+    ramulator
+    GIT_REPOSITORY https://github.com/CMU-SAFARI/ramulator.git
+    GIT_TAG ${RAMULATOR_TAG}
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_GetProperties(ramulator)
+  if(NOT ramulator_POPULATED)
+    FetchContent_Populate(ramulator)
+  endif()
+  set(RAMULATOR_SOURCE_DIR ${ramulator_SOURCE_DIR})
+endif()
+
+# ramulator is maintained with a Makefile, so the sources are compiled
+# directly into the _core module instead of via add_subdirectory.
+set(RAMULATOR_SRC ${RAMULATOR_SOURCE_DIR}/src)
 
 set(RAMULATOR_SOURCES
     ${RAMULATOR_SRC}/Config.cpp
@@ -39,3 +67,8 @@ target_compile_definitions(_core PRIVATE RAMULATOR)
 target_compile_options(_core PRIVATE -O3)
 
 install(TARGETS _core DESTINATION pyramulator)
+
+# Ship the ramulator reference configs so Config.from_file keeps working
+# without the vendored dependency tree.
+file(GLOB RAMULATOR_CONFIGS ${RAMULATOR_SOURCE_DIR}/configs/*.cfg)
+install(FILES ${RAMULATOR_CONFIGS} DESTINATION pyramulator/data/configs)

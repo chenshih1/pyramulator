@@ -2,7 +2,7 @@
 
 import logging
 
-from pyramulator import Config, MemorySystem, RequestType
+from pyramulator import Config, benchmark_latency, benchmark_bandwidth
 
 logger = logging.getLogger(__name__)
 
@@ -23,97 +23,6 @@ def make_config(params, channels=1, ranks=1):
     return Config(channels=channels, ranks=ranks, **params)
 
 
-def bench_latency(params, channels=1, ranks=1):
-    """Measure average read latency in DRAM clock cycles."""
-    cfg = make_config(params, channels, ranks)
-    latencies = []
-
-    with MemorySystem(cfg, cacheline=CACHELINE) as mem:
-        for i in range(NUM_REQUESTS):
-            addr = i * CACHELINE
-            while not mem.send_read(addr, callback=lambda info: latencies.append(
-                    info.depart - info.arrive)):
-                mem.tick()
-
-        mem.run_until_idle()
-        tck = mem.tck
-
-    if not latencies:
-        return None
-
-    avg = sum(latencies) / len(latencies)
-    return {"avg": avg, "min": min(latencies), "max": max(latencies),
-            "tck": tck, "completed": len(latencies)}
-
-
-def bench_throughput(params, channels=1, ranks=1):
-    """Measure sustained read throughput (GB/s) with a full queue."""
-    cfg = make_config(params, channels, ranks)
-    completed = [0]
-    first_clk = [None]
-    last_clk = [0]
-
-    def on_done(info):
-        completed[0] += 1
-        if first_clk[0] is None:
-            first_clk[0] = info.depart
-        last_clk[0] = info.depart
-
-    with MemorySystem(cfg, cacheline=CACHELINE) as mem:
-        issued = 0
-        addr = 0
-        while completed[0] < NUM_REQUESTS and mem.clk < 200_000:
-            while issued - completed[0] < 32 and issued < NUM_REQUESTS:
-                if mem.send_read(addr, callback=on_done):
-                    issued += 1
-                    addr += CACHELINE
-                else:
-                    break
-            mem.tick()
-        tck = mem.tck
-
-    if first_clk[0] is None or completed[0] < 2:
-        return None
-
-    active_cycles = last_clk[0] - first_clk[0]
-    if active_cycles == 0:
-        return None
-
-    bytes_transferred = completed[0] * CACHELINE
-    seconds = active_cycles * tck * 1e-9
-    bandwidth_gbs = bytes_transferred / seconds / 1e9
-
-    return {"bandwidth_gbs": bandwidth_gbs, "completed": completed[0],
-            "cycles": active_cycles, "tck": tck}
-
-
-def bench_random(params, channels=1, ranks=1, seed=42):
-    """Measure latency with random access pattern (row buffer misses)."""
-    import random
-    rng = random.Random(seed)
-    max_addr = 1 << 26
-
-    cfg = make_config(params, channels, ranks)
-    latencies = []
-    addrs = [rng.randrange(0, max_addr, CACHELINE) for _ in range(NUM_REQUESTS)]
-
-    with MemorySystem(cfg, cacheline=CACHELINE) as mem:
-        for addr in addrs:
-            while not mem.send_read(addr, callback=lambda info: latencies.append(
-                    info.depart - info.arrive)):
-                mem.tick()
-
-        mem.run_until_idle()
-        tck = mem.tck
-
-    if not latencies:
-        return None
-
-    avg = sum(latencies) / len(latencies)
-    return {"avg": avg, "min": min(latencies), "max": max(latencies),
-            "tck": tck, "completed": len(latencies)}
-
-
 def run_all():
     logger.info("=" * 78)
     logger.info("%s", f"{'Pyramulator Benchmark':^78}")
@@ -127,8 +36,8 @@ def run_all():
                 f"{'Max':>6}", f"{'Avg(ns)':>9}", f"{'tck(ns)':>8}")
     logger.info("-" * 78)
     for name, params in CONFIGS.items():
-        result = bench_latency(params)
-        if result:
+        result = benchmark_latency(make_config(params), NUM_REQUESTS)
+        if result and result["completed"]:
             logger.info("%s %s", f"{name:<16}",
                         f"{result['avg']:>9.1f} {result['min']:>6} "
                         f"{result['max']:>6} {result['avg'] * result['tck']:>9.2f} "
@@ -143,8 +52,9 @@ def run_all():
                 f"{'Max':>6}", f"{'Avg(ns)':>9}", f"{'tck(ns)':>8}")
     logger.info("-" * 78)
     for name, params in CONFIGS.items():
-        result = bench_random(params)
-        if result:
+        result = benchmark_latency(make_config(params), NUM_REQUESTS,
+                                   mode="random", seed=42)
+        if result and result["completed"]:
             logger.info("%s %s", f"{name:<16}",
                         f"{result['avg']:>9.1f} {result['min']:>6} "
                         f"{result['max']:>6} {result['avg'] * result['tck']:>9.2f} "
@@ -159,8 +69,8 @@ def run_all():
                 f"{'Cycles':>10}", f"{'tck(ns)':>8}")
     logger.info("-" * 78)
     for name, params in CONFIGS.items():
-        result = bench_throughput(params)
-        if result:
+        result = benchmark_bandwidth(make_config(params), NUM_REQUESTS)
+        if result and result["completed"]:
             logger.info("%s %s", f"{name:<16}",
                         f"{result['bandwidth_gbs']:>10.2f} "
                         f"{result['completed']:>10} {result['cycles']:>10} "
@@ -174,13 +84,17 @@ def run_all():
     logger.info("-" * 78)
     base_bw = None
     for num_channels in [1, 2, 4]:
-        result = bench_throughput(CONFIGS["DDR4_2400"], channels=num_channels)
-        if result:
+        result = benchmark_bandwidth(make_config(CONFIGS["DDR4_2400"],
+                                                 channels=num_channels),
+                                     NUM_REQUESTS)
+        if result and result["completed"]:
             if base_bw is None:
                 base_bw = result["bandwidth_gbs"]
             speedup = result["bandwidth_gbs"] / base_bw
             logger.info("%s %s", f"{num_channels:<16}",
                         f"{result['bandwidth_gbs']:>10.2f} {speedup:>10.2f}x")
+        else:
+            logger.warning("%s %s", f"{num_channels:<16}", f"{'FAILED':>10}")
 
     logger.info("=" * 78)
     logger.info("Done.")
