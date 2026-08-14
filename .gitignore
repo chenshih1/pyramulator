@@ -13,6 +13,8 @@ dist/
 __pycache__/
 *.py[cod]
 *.egg
+.coverage
+htmlcov/
 
 # CMake
 CMakeCache.txt

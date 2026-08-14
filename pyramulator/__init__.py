@@ -4,50 +4,73 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Iterable, NamedTuple
+from collections.abc import Iterable
+from typing import Any, Callable, ClassVar, Literal, NamedTuple
 
-logger = logging.getLogger(__name__)
 from pyramulator._core import (
     Config as _Config,
+)
+from pyramulator._core import (
     MemorySystem as _MemorySystem,
+)
+from pyramulator._core import (
     RequestType,
+)
+from pyramulator._core import (
     get_stats as _get_stats,
+)
+from pyramulator._core import (
     reset_stats as _reset_stats,
 )
+from pyramulator.benchmark import (
+    benchmark_all,
+    benchmark_bandwidth,
+    benchmark_latency,
+)
 from pyramulator.configs import (
-    supported_standards,
-    supported_speeds,
-    supported_orgs,
+    MIN_CACHELINE,
+    ORGANIZATIONS,
+    SPEED_GRADES,
+    _standard_key,
     config_dir,
     estimate_capacity,
+    supported_orgs,
+    supported_speeds,
+    supported_standards,
     theoretical_bandwidth,
-    MIN_CACHELINE,
-    _standard_key,
-    SPEED_GRADES,
-    ORGANIZATIONS,
 )
 from pyramulator.metrics import (
     avg_read_latency,
-    row_hit_rate,
     measured_bandwidth,
+    row_hit_rate,
     summarize_metrics,
 )
 from pyramulator.workload import addresses, read_write_mix
-from pyramulator.benchmark import (
-    benchmark_latency,
-    benchmark_bandwidth,
-    benchmark_all,
-)
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
-    "Config", "MemorySystem", "RequestType", "RequestInfo",
-    "supported_standards", "supported_speeds", "supported_orgs",
-    "config_dir", "estimate_capacity", "get_stats", "reset_stats",
-    "theoretical_bandwidth",
-    "avg_read_latency", "row_hit_rate", "measured_bandwidth",
+    "Config",
+    "MemorySystem",
+    "RequestInfo",
+    "RequestType",
+    "addresses",
+    "avg_read_latency",
+    "benchmark_all",
+    "benchmark_bandwidth",
+    "benchmark_latency",
+    "config_dir",
+    "estimate_capacity",
+    "get_stats",
+    "measured_bandwidth",
+    "read_write_mix",
+    "reset_stats",
+    "row_hit_rate",
     "summarize_metrics",
-    "addresses", "read_write_mix",
-    "benchmark_latency", "benchmark_bandwidth", "benchmark_all",
+    "supported_orgs",
+    "supported_speeds",
+    "supported_standards",
+    "theoretical_bandwidth",
 ]
 __version__ = "0.1.0"
 
@@ -91,7 +114,7 @@ class Config(_Config):
         cfg = Config.from_file("ddr4.cfg", channels=2)
     """
 
-    _DEFAULTS = {"channels": "1", "ranks": "1"}
+    _DEFAULTS: ClassVar[dict[str, str]] = {"channels": "1", "ranks": "1"}
 
     def __init__(self, config_file: str | os.PathLike | None = None,
                  **kwargs: Any) -> None:
@@ -459,6 +482,6 @@ class MemorySystem:
     def __enter__(self) -> MemorySystem:
         return self
 
-    def __exit__(self, *exc: object) -> bool:
+    def __exit__(self, *exc: object) -> Literal[False]:
         self.finish()
         return False

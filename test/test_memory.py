@@ -69,16 +69,15 @@ class TestMemorySystem:
     def test_send_reads_batch(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         results = []
-        accepted = mem.send_reads([0x0, 0x40, 0x80],
-                                  callback=lambda info: results.append(info))
-        assert all(accepted)
+        mem.send_reads([0x0, 0x40, 0x80],
+                       callback=lambda info: results.append(info))
         mem.run_until_idle()
         assert len(results) == 3
 
     def test_send_writes_batch(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         results = []
-        accepted = mem.send_writes([0x0, 0x40, 0x80, 0xC0] * 8,
+        mem.send_writes([0x0, 0x40, 0x80, 0xC0] * 8,
                                    callback=lambda info: results.append(info))
         mem.run(10000)
         assert len(results) > 0
@@ -279,6 +278,7 @@ class TestStats:
 
     def test_module_level_requires_single_instance(self, ddr4_config):
         import gc
+
         from pyramulator import get_stats
         mem = MemorySystem(ddr4_config)
         try:

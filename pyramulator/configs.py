@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib.resources import files as _pkg_files
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
 
 SUPPORTED_STANDARDS: list[str] = [
     "DDR3", "DDR4", "LPDDR3", "LPDDR4",
@@ -191,7 +191,7 @@ def theoretical_bandwidth(config: Mapping[str, object],
 
     standard = str(config["standard"])
     speed = str(config["speed"])
-    channels = int(config["channels"])
+    channels = int(str(config["channels"]))
 
     key = _standard_key(standard)
     width_bits = _CHANNEL_WIDTHS.get(key, 64)
@@ -211,7 +211,7 @@ def theoretical_bandwidth(config: Mapping[str, object],
 
 def config_dir() -> Path:
     """Path to the reference Ramulator config files bundled with this package."""
-    return _pkg_files("pyramulator").joinpath("data", "configs")  # type: ignore[return-value]
+    return Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
 
 
 def supported_standards() -> list[str]:

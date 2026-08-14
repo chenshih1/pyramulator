@@ -3,9 +3,14 @@
 import pytest
 
 from pyramulator import (
-    Config, RequestInfo, RequestType,
-    supported_standards, supported_speeds, supported_orgs,
-    estimate_capacity, theoretical_bandwidth,
+    Config,
+    RequestInfo,
+    RequestType,
+    estimate_capacity,
+    supported_orgs,
+    supported_speeds,
+    supported_standards,
+    theoretical_bandwidth,
 )
 from pyramulator.configs import show
 

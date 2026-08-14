@@ -1,0 +1,20 @@
+# Normalize line endings for the languages in this repository
+* text=auto
+
+# Source files always use LF
+*.py text eol=lf
+*.{c,cc,cpp,h,hpp} text eol=lf
+*.{yml,yaml,toml,json,md} text eol=lf
+
+# Binaries
+*.so binary
+*.whl binary
+*.tar.gz binary
+
+# Exclude third-party content from archives (sdist/git export)
+third_party/ export-ignore
+.github/ export-ignore
+test/ export-ignore
+bench/ export-ignore
+examples/ export-ignore
+.venv/ export-ignore

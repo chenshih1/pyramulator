@@ -8,7 +8,7 @@ returned by ``MemorySystem.get_stats()``.
 from __future__ import annotations
 
 import re
-from typing import Mapping
+from collections.abc import Mapping
 
 _LAT_SUM_RE = re.compile(r"read_latency_sum_(\d+)$")
 _ROW_HITS_RE = re.compile(r"read_row_hits_channel_(\d+)_core$")
@@ -21,10 +21,15 @@ def _sum_matching(stats: Mapping[str, object], pattern: re.Pattern) -> float:
                if pattern.match(k) and isinstance(v, (int, float)))
 
 
+def _num(stats: Mapping[str, object], key: str) -> float:
+    value = stats.get(key)
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
 def avg_read_latency(stats: Mapping[str, object]) -> float:
     """Average read latency in DRAM clock cycles (all channels)."""
     total = _sum_matching(stats, _LAT_SUM_RE)
-    requests = stats.get("read_requests", 0) or 0
+    requests = _num(stats, "read_requests")
     return total / requests if requests else 0.0
 
 
@@ -44,9 +49,8 @@ def measured_bandwidth(stats: Mapping[str, object], cacheline: int,
     Uses the total simulated time (dram_cycles x tck), so idle cycles are
     included.
     """
-    requests = (stats.get("read_requests", 0) or 0) + \
-        (stats.get("write_requests", 0) or 0)
-    cycles = stats.get("dram_cycles", 0) or 0
+    requests = _num(stats, "read_requests") + _num(stats, "write_requests")
+    cycles = _num(stats, "dram_cycles")
     seconds = cycles * tck_ns * 1e-9
     if seconds <= 0:
         return 0.0
@@ -56,12 +60,11 @@ def measured_bandwidth(stats: Mapping[str, object], cacheline: int,
 def summarize_metrics(stats: Mapping[str, object], cacheline: int,
                       tck_ns: float) -> dict[str, float]:
     """One-call summary dict for event-driven architecture reporting."""
-    cycles = stats.get("dram_cycles", 0) or 0
     latency = avg_read_latency(stats)
     return {
-        "read_requests": stats.get("read_requests", 0) or 0,
-        "write_requests": stats.get("write_requests", 0) or 0,
-        "dram_cycles": cycles,
+        "read_requests": _num(stats, "read_requests"),
+        "write_requests": _num(stats, "write_requests"),
+        "dram_cycles": _num(stats, "dram_cycles"),
         "avg_read_latency_cycles": latency,
         "avg_read_latency_ns": latency * tck_ns,
         "row_hit_rate": row_hit_rate(stats),

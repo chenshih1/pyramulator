@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Python bindings for Ramulator DRAM simulator"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "pyramulator contributors"}]
 keywords = ["dram", "simulator", "ramulator", "memory", "hardware"]
 classifiers = [
@@ -18,12 +19,34 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
+urls = {Repository = "https://gitee.com/chenshih1/pyramulator"}
 
 [project.optional-dependencies]
 test = ["pytest"]
+dev = ["pyramulator[test]", "ruff", "mypy", "pytest-cov"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
+addopts = "--cov=pyramulator --cov-report=term-missing:skip-covered"
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "RUF", "PYI"]
+# PYI034: __enter__ returns the concrete type; typing.Self needs Python 3.11
+ignore = ["PYI034"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["pyramulator"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.scikit-build]
 cmake.version = ">=3.15"

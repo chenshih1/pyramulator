@@ -2,17 +2,19 @@
 
 import logging
 
-from pyramulator import Config, benchmark_latency, benchmark_bandwidth
+from pyramulator import Config, benchmark_bandwidth, benchmark_latency
 
 logger = logging.getLogger(__name__)
 
 
 CONFIGS = {
-    "DDR3_1600": dict(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8"),
-    "DDR4_2400": dict(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8"),
-    "DDR4_3200": dict(standard="DDR4", speed="DDR4_3200AA", org="DDR4_8Gb_x8"),
-    "LPDDR3_1600": dict(standard="LPDDR3", speed="LPDDR3_1600", org="LPDDR3_8Gb_x32"),
-    "LPDDR4_2400": dict(standard="LPDDR4", speed="LPDDR4_2400", org="LPDDR4_8Gb_x16"),
+    "DDR3_1600": {"standard": "DDR3", "speed": "DDR3_1600K", "org": "DDR3_2Gb_x8"},
+    "DDR4_2400": {"standard": "DDR4", "speed": "DDR4_2400R", "org": "DDR4_4Gb_x8"},
+    "DDR4_3200": {"standard": "DDR4", "speed": "DDR4_3200AA", "org": "DDR4_8Gb_x8"},
+    "LPDDR3_1600": {"standard": "LPDDR3", "speed": "LPDDR3_1600",
+                     "org": "LPDDR3_8Gb_x32"},
+    "LPDDR4_2400": {"standard": "LPDDR4", "speed": "LPDDR4_2400",
+                     "org": "LPDDR4_8Gb_x16"},
 }
 
 NUM_REQUESTS = 256
@@ -26,7 +28,8 @@ def make_config(params, channels=1, ranks=1):
 def run_all():
     logger.info("=" * 78)
     logger.info("%s", f"{'Pyramulator Benchmark':^78}")
-    logger.info("%s", f"{'requests=' + str(NUM_REQUESTS) + '  cacheline=' + str(CACHELINE) + 'B':^78}")
+    header = f"requests={NUM_REQUESTS}  cacheline={CACHELINE}B"
+    logger.info("%s", f"{header:^78}")
     logger.info("=" * 78)
 
     logger.info("")
@@ -80,7 +83,8 @@ def run_all():
 
     logger.info("")
     logger.info("%s", f"{'--- Throughput Scaling (DDR4_2400, channels=1,2,4) ---':^78}")
-    logger.info("%s %s %s", f"{'Channels':<16}", f"{'BW(GB/s)':>10}", f"{'Speedup':>10}")
+    logger.info("%s %s %s", f"{'Channels':<16}",
+                f"{'BW(GB/s)':>10}", f"{'Speedup':>10}")
     logger.info("-" * 78)
     base_bw = None
     for num_channels in [1, 2, 4]:

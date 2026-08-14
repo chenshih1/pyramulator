@@ -3,10 +3,13 @@
 import pytest
 
 from pyramulator import (
-    Config, MemorySystem,
-    avg_read_latency, row_hit_rate,
-    addresses, read_write_mix,
-    benchmark_latency, benchmark_bandwidth,
+    MemorySystem,
+    addresses,
+    avg_read_latency,
+    benchmark_bandwidth,
+    benchmark_latency,
+    read_write_mix,
+    row_hit_rate,
 )
 
 

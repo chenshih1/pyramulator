@@ -11,7 +11,7 @@ Demonstrates: multi-core traffic, backpressure, callbacks, latency measurement.
 
 import logging
 
-from pyramulator import Config, MemorySystem, RequestInfo
+from pyramulator import Config, MemorySystem
 
 logger = logging.getLogger(__name__)
 
@@ -159,28 +159,28 @@ class Accelerator:
 def main():
     scenarios = [
         ("DDR4-2400 2ch, tile=64, depth=32",
-         dict(standard="DDR4", channels=2, ranks=1,
-              speed="DDR4_2400R", org="DDR4_4Gb_x8"),
-         dict(num_lanes=4, vector_size=4096, tile_size=64,
-              max_outstanding=32, compute_cycles=4)),
+         {"standard": "DDR4", "channels": 2, "ranks": 1,
+              "speed": "DDR4_2400R", "org": "DDR4_4Gb_x8"},
+         {"num_lanes": 4, "vector_size": 4096, "tile_size": 64,
+              "max_outstanding": 32, "compute_cycles": 4}),
 
         ("DDR4-2400 2ch, tile=256, depth=32",
-         dict(standard="DDR4", channels=2, ranks=1,
-              speed="DDR4_2400R", org="DDR4_4Gb_x8"),
-         dict(num_lanes=4, vector_size=4096, tile_size=256,
-              max_outstanding=32, compute_cycles=4)),
+         {"standard": "DDR4", "channels": 2, "ranks": 1,
+              "speed": "DDR4_2400R", "org": "DDR4_4Gb_x8"},
+         {"num_lanes": 4, "vector_size": 4096, "tile_size": 256,
+              "max_outstanding": 32, "compute_cycles": 4}),
 
         ("DDR4-2400 1ch, tile=64, depth=32",
-         dict(standard="DDR4", channels=1, ranks=1,
-              speed="DDR4_2400R", org="DDR4_4Gb_x8"),
-         dict(num_lanes=4, vector_size=4096, tile_size=64,
-              max_outstanding=32, compute_cycles=4)),
+         {"standard": "DDR4", "channels": 1, "ranks": 1,
+              "speed": "DDR4_2400R", "org": "DDR4_4Gb_x8"},
+         {"num_lanes": 4, "vector_size": 4096, "tile_size": 64,
+              "max_outstanding": 32, "compute_cycles": 4}),
 
         ("DDR3-1600 1ch, tile=64, depth=16",
-         dict(standard="DDR3", channels=1, ranks=1,
-              speed="DDR3_1600K", org="DDR3_2Gb_x8"),
-         dict(num_lanes=4, vector_size=4096, tile_size=64,
-              max_outstanding=16, compute_cycles=4)),
+         {"standard": "DDR3", "channels": 1, "ranks": 1,
+              "speed": "DDR3_1600K", "org": "DDR3_2Gb_x8"},
+         {"num_lanes": 4, "vector_size": 4096, "tile_size": 64,
+              "max_outstanding": 16, "compute_cycles": 4}),
     ]
 
     for label, dram_params, accel_params in scenarios:
