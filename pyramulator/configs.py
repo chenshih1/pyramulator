@@ -88,6 +88,18 @@ ORGANIZATIONS: dict[str, list[str]] = {
 }
 
 
+# Address mapping schemes (channel/bank/row interleaving). Ramulator only
+# honors the "mapping" config for DDR3; other standards always use their
+# default mapping.
+SUPPORTED_MAPPINGS: list[str] = [
+    "defaultmapping",
+    "row_interleaving",
+    "cacheline_interleaving",
+    "row_interleaving_randomized",
+    "cacheline_interleaving_randomized",
+]
+
+
 def _standard_key(standard: str) -> str:
     """Map standard name to lookup key (SALP variants share one table)."""
     if standard.startswith("SALP"):

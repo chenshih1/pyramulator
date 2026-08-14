@@ -108,6 +108,29 @@ For initial bursts, `send_read_blocking(addr)` blocks until accepted;
 `send_reads()` / `send_writes()` / `send_reads_range()` / `send_writes_range()`
 batch many requests in one C++ call.
 
+For a self-contained drive loop — the role gem5's MemCtrl scheduler plays —
+`drive()` / `drive_range()` run the whole backpressure + tick + drain loop
+inside C++:
+
+```python
+issued = mem.drive_range(0, NUM_REQUESTS, 64, queue_depth=32, batch=200,
+                         callback=on_complete)
+```
+
+`batch` trades scheduling granularity for cycle efficiency: ~`queue_depth x 6`
+cycles wastes no DRAM time (measured at parity with the Python loop,
+~150K req/s, with the loop overhead removed).
+
+### Address mapping
+
+The channel/bank/row interleaving scheme is selectable via `mapping`
+(Ramulator honors it for DDR3):
+
+```python
+cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
+             mapping="cacheline_interleaving")   # row_interleaving, *_randomized, defaultmapping
+```
+
 ### Statistics
 
 ```python

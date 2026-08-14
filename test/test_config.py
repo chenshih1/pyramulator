@@ -178,3 +178,30 @@ class TestCapacity:
 
     def test_salp(self):
         assert estimate_capacity("SALP-1", "SALP_512Mb_x4") == 2 ** 30
+
+
+class TestMapping:
+    def test_valid_mapping_accepted(self):
+        cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
+                     mapping="cacheline_interleaving")
+        assert cfg.validate() is True
+
+    def test_default_mapping_accepted(self):
+        cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
+                     mapping="defaultmapping")
+        assert cfg.validate() is True
+
+    def test_invalid_mapping_rejected(self):
+        cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
+                     mapping="bogus_mapping")
+        with pytest.raises(ValueError, match="invalid mapping"):
+            cfg.validate()
+
+    def test_ddr3_runs_with_mapping(self):
+        from pyramulator import MemorySystem
+        cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
+                     mapping="cacheline_interleaving")
+        mem = MemorySystem(cfg)
+        done = []
+        mem.drive_range(0, 16, 64, callback=lambda i: done.append(i))
+        assert len(done) == 16

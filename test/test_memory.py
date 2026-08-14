@@ -401,3 +401,58 @@ class TestCachelineValidation:
                      org="LPDDR4_8Gb_x16")
         mem = MemorySystem(cfg, cacheline=32)
         assert mem.tck > 0
+
+
+class TestDrive:
+    def test_drive_completes_all(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        done = []
+        issued = mem.drive([i * 64 for i in range(64)],
+                           callback=lambda i: done.append(i))
+        assert issued == 64
+        assert len(done) == 64
+        assert mem.pending == 0
+
+    def test_drive_range_matches_manual_loop(self, ddr4_config):
+        def run_manual():
+            m = MemorySystem(ddr4_config)
+            done = []
+            issued = 0
+            addr = 0
+            while len(done) < 128 and m.clk < 1_000_000:
+                while issued - len(done) < 32 and issued < 128:
+                    if m.send_read(addr, callback=lambda i: done.append(i)):
+                        issued += 1
+                        addr += 64
+                    else:
+                        break
+                m.run(200)
+            return m, len(done)
+
+        def run_drive():
+            m = MemorySystem(ddr4_config)
+            done = []
+            issued = m.drive_range(0, 128, 64, batch=200,
+                                   callback=lambda i: done.append(i))
+            return m, issued, len(done)
+
+        m1, done1 = run_manual()
+        m2, issued2, done2 = run_drive()
+        assert issued2 == 128
+        assert done2 == 128
+        assert done1 == 128
+        # drive drains exactly; no more cycles than the manual loop (batch granularity)
+        assert m2.clk <= m1.clk
+
+    def test_drive_no_callback(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        issued = mem.drive_range(0, 64, 64, batch=200)
+        assert issued == 64
+        assert mem.pending == 0
+        assert mem.get_stats()["read_requests"] == 64
+
+    def test_drive_max_cycles(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        issued = mem.drive_range(0, 100_000, 64, max_cycles=100)
+        assert issued < 100_000  # 超时截断
+        assert mem.clk <= 100

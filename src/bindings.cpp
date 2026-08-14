@@ -193,6 +193,91 @@ public:
         return mem_->send(req);
     }
 
+    // ------------------------------------------------------------------
+    // Drive loop: the whole backpressure + tick loop runs inside C++, the
+    // role gem5's MemCtrl scheduler plays. Requests are issued until the
+    // in-flight count reaches queue_depth; the DRAM then advances in
+    // batches of `batch` cycles (no send attempts inside a batch), until
+    // every request completes or max_cycles is hit. Returns
+    // (cycles_run, issued, completion_events).
+    // ------------------------------------------------------------------
+    template <typename Sender>
+    py::tuple drive_loop(Sender send_one, long total, int queue_depth,
+                         long batch, long max_cycles, py::object callback) {
+        std::function<void(Request &)> cb;
+        if (!callback.is_none()) {
+            cb = [this, callback](Request &r) {
+                completed_.push_back(
+                    {r.addr, static_cast<int>(r.type), r.arrive, r.depart,
+                     r.coreid, callback});
+                ++completed_count_;
+            };
+        } else {
+            cb = [this](Request &) { ++completed_count_; };
+        }
+
+        long issued = 0;
+        long cycles = 0;
+        while (issued < total && cycles < max_cycles) {
+            // Fill the queue while slots are available.
+            while (issued < total &&
+                   (issued - completed_count_) < queue_depth) {
+                if (!send_one(issued, cb))
+                    break;  // queue full; advance and retry
+                ++issued;
+            }
+            // Advance the DRAM for a batch of cycles without send attempts.
+            // Keeping the queue drained inside the batch keeps the
+            // controller's per-cycle scheduling cost low.
+            long ticks = 0;
+            while (ticks < batch && issued < total &&
+                   cycles < max_cycles) {
+                mem_->tick();
+                ++cycles;
+                ++ticks;
+            }
+        }
+        // Drain in-flight requests after the last one is issued.
+        while ((issued - completed_count_) > 0 && cycles < max_cycles) {
+            mem_->tick();
+            ++cycles;
+        }
+        return py::make_tuple(cycles, issued, drain_completed());
+    }
+
+    py::tuple drive(const py::list &addrs, int queue_depth, long batch,
+                    long max_cycles, py::object callback) {
+        const long total = static_cast<long>(addrs.size());
+        return drive_loop(
+            [&](long i, std::function<void(Request &)> &cb) {
+                Request req;
+                req.addr = addrs[static_cast<size_t>(i)].cast<long>();
+                req.type = Request::Type::READ;
+                req.coreid = 0;
+                req.is_first_command = true;
+                req.callback = cb;
+                return mem_->send(req);
+            },
+            total, queue_depth, batch, max_cycles, callback);
+    }
+
+    py::tuple drive_range(long start, long count, long stride,
+                          int queue_depth, long batch, long max_cycles,
+                          py::object callback) {
+        return drive_loop(
+            [&](long i, std::function<void(Request &)> &cb) {
+                Request req;
+                req.addr = start + i * stride;
+                req.type = Request::Type::READ;
+                req.coreid = 0;
+                req.is_first_command = true;
+                req.callback = cb;
+                return mem_->send(req);
+            },
+            count, queue_depth, batch, max_cycles, callback);
+    }
+
+    // across many requests.
     // Bulk send: build and enqueue one request per address in a single C++
     // call, returning the accept flag for each. Amortizes pybind overhead
     // across many requests.
@@ -304,6 +389,7 @@ private:
     };
 
     std::deque<CompletionEvent> completed_;
+    long completed_count_ = 0;
     std::pair<size_t, size_t> stats_range_{0, 0};
 
     static std::set<PyMemorySystem *> live_;
@@ -394,6 +480,17 @@ PYBIND11_MODULE(_core, m) {
         .def("send_range", &PyMemorySystem::send_range,
              py::arg("start"), py::arg("count"), py::arg("stride"),
              py::arg("type"), py::arg("core_id") = 0,
+             py::arg("callback") = py::none())
+        .def("drive", &PyMemorySystem::drive,
+             py::arg("addrs"), py::arg("queue_depth") = 32,
+             py::arg("batch") = 100,
+             py::arg("max_cycles") = 1000000,
+             py::arg("callback") = py::none())
+        .def("drive_range", &PyMemorySystem::drive_range,
+             py::arg("start"), py::arg("count"), py::arg("stride"),
+             py::arg("queue_depth") = 32,
+             py::arg("batch") = 100,
+             py::arg("max_cycles") = 1000000,
              py::arg("callback") = py::none())
         .def("finish", &PyMemorySystem::finish)
         .def("set_high_writeq_watermark",

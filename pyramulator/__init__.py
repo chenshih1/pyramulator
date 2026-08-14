@@ -31,6 +31,7 @@ from pyramulator.configs import (
     MIN_CACHELINE,
     ORGANIZATIONS,
     SPEED_GRADES,
+    SUPPORTED_MAPPINGS,
     _standard_key,
     config_dir,
     estimate_capacity,
@@ -172,6 +173,12 @@ class Config(_Config):
             raise ValueError(
                 f"invalid org '{org}' for {standard}, "
                 f"choose from: {ORGANIZATIONS.get(key, [])}")
+
+        mapping = self["mapping"]
+        if mapping and mapping not in SUPPORTED_MAPPINGS:
+            raise ValueError(
+                f"invalid mapping '{mapping}', "
+                f"choose from: {SUPPORTED_MAPPINGS}")
 
         channels = int(self["channels"])
         ranks = int(self["ranks"])
@@ -413,6 +420,59 @@ class MemorySystem:
                                          RequestType.WRITE,
                                          self.clk, self.clk, core_id))
         return accepted
+
+    def drive(self, addrs: Iterable[int], queue_depth: int = 32,
+              batch: int = 100, max_cycles: int = 1_000_000,
+              callback: Callable[[RequestInfo], None] | None = None) -> int:
+        """Run the full drive loop inside C++ for a list of addresses.
+
+        Requests are issued until `queue_depth` are in flight, then the DRAM
+        advances `batch` cycles at a time, until every request completes or
+        max_cycles is reached (the role gem5's MemCtrl scheduler plays).
+        Completions are dispatched through callback in one batch. Returns
+        the number of issued requests."""
+        if callback is not None:
+            user_cb = callback
+
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
+                                    core_id_))
+
+            n, issued, events = self._impl.drive(
+                addrs, queue_depth, batch, max_cycles, _wrap)
+        else:
+            n, issued, events = self._impl.drive(
+                addrs, queue_depth, batch, max_cycles, None)
+        self._clk += n
+        self._dispatch(events)
+        return issued
+
+    def drive_range(self, start: int, count: int, stride: int | None = None,
+                    queue_depth: int = 32, batch: int = 100,
+                    max_cycles: int = 1_000_000,
+                    callback: Callable[[RequestInfo], None] | None = None
+                    ) -> int:
+        """Drive loop over a contiguous address range (start, +stride, ...).
+
+        Stride defaults to the memory system's cacheline. Returns the number
+        of issued requests."""
+        if stride is None:
+            stride = self._cacheline
+        if callback is not None:
+            user_cb = callback
+
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
+                                    core_id_))
+
+            n, issued, events = self._impl.drive_range(
+                start, count, stride, queue_depth, batch, max_cycles, _wrap)
+        else:
+            n, issued, events = self._impl.drive_range(
+                start, count, stride, queue_depth, batch, max_cycles, None)
+        self._clk += n
+        self._dispatch(events)
+        return issued
 
     def get_stats(self) -> dict[str, object]:
         """Return this memory system's statistics as a {name: value} dict.
