@@ -211,7 +211,7 @@ def theoretical_bandwidth(config: Mapping[str, object],
 
 def config_dir() -> Path:
     """Path to the reference Ramulator config files bundled with this package."""
-    return Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
+    return Path(str(_pkg_files("pyramulator").joinpath("data").joinpath("configs")))
 
 
 def supported_standards() -> list[str]:
