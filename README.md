@@ -170,6 +170,14 @@ callbacks is ~150K req/s; callbacks are delivered in batches (no per-event
 GIL round-trip). See `bench/bench.py` for measured latency and bandwidth
 across standards.
 
+## Examples
+
+- `examples/spmm_hbm.py` — a naive single-PE SpMM accelerator streaming the
+  dense matrix from an HBM timing model (event-driven loop with a bounded
+  in-flight window, validated against numpy, reports cycles/bandwidth/row
+  hits). Run with `python examples/spmm_hbm.py [channels]`.
+- `examples/accel_sim.py` — generic accelerator-style read/write traffic.
+
 ## Development
 
 Build, test and check inside a local virtualenv:
