@@ -1,5 +1,6 @@
 """Package metadata consistency tests."""
 
+import re
 from pathlib import Path
 
 import pyramulator
@@ -10,10 +11,10 @@ def _project_root():
 
 
 def _toml_version():
-    import tomllib
-
-    with open(_project_root() / "pyproject.toml", "rb") as f:
-        return tomllib.load(f)["project"]["version"]
+    text = (_project_root() / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, "version not found in pyproject.toml"
+    return match.group(1)
 
 
 class TestVersionConsistency:
