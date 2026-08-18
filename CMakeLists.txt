@@ -10,28 +10,73 @@ find_package(pybind11 CONFIG REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Ramulator is an external dependency. Prefer the git submodule at
-# third_party/ramulator; fall back to fetching from upstream when it is
-# absent (e.g. when building from an sdist). The bindings use only
-# ramulator's public API (same calls as its own Gem5Wrapper), so no
+# third_party/ramulator; fall back to downloading the pinned source tarball
+# when it is absent (e.g. when building from an sdist). The bindings use
+# only ramulator's public API (same calls as its own Gem5Wrapper), so no
 # ramulator source is modified.
+#
+# git smart-HTTP to github.com is unreliable on some networks, so the
+# auto-fetch downloads the pinned commit's tarball from codeload (or a
+# configured mirror) with retries instead of git clone/FetchContent.
 # ---------------------------------------------------------------------------
 set(RAMULATOR_TAG "214f635845214adf030367939655d172ef0fed5f")
 
 set(RAMULATOR_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ramulator)
 if(NOT EXISTS ${RAMULATOR_SOURCE_DIR}/src/Config.h)
-  message(STATUS "ramulator submodule not found, fetching from upstream")
-  include(FetchContent)
-  FetchContent_Declare(
-    ramulator
-    GIT_REPOSITORY https://github.com/CMU-SAFARI/ramulator.git
-    GIT_TAG ${RAMULATOR_TAG}
-    GIT_SHALLOW TRUE
-  )
-  FetchContent_GetProperties(ramulator)
-  if(NOT ramulator_POPULATED)
-    FetchContent_Populate(ramulator)
-  endif()
-  set(RAMULATOR_SOURCE_DIR ${ramulator_SOURCE_DIR})
+    option(PYRAMULATOR_FETCH_RAMULATOR
+        "Auto-download the vendored Ramulator when missing" ON)
+    set(PYRAMULATOR_RAMULATOR_TARBALL_URL
+        "https://codeload.github.com/CMU-SAFARI/ramulator/tar.gz/${RAMULATOR_TAG}"
+        CACHE STRING
+        "Source tarball to fetch Ramulator from when auto-fetch is enabled")
+    set(PYRAMULATOR_FETCH_RETRIES 3 CACHE STRING
+        "Auto-fetch download attempts before giving up")
+
+    if(PYRAMULATOR_FETCH_RAMULATOR)
+        message(STATUS
+            "ramulator submodule not found; downloading pinned source ${RAMULATOR_TAG}")
+        set(_ramu_tar "${CMAKE_BINARY_DIR}/ramulator-${RAMULATOR_TAG}.tar.gz")
+        set(_ramu_fetch_ok FALSE)
+        foreach(_attempt RANGE 1 ${PYRAMULATOR_FETCH_RETRIES})
+            file(DOWNLOAD "${PYRAMULATOR_RAMULATOR_TARBALL_URL}" "${_ramu_tar}"
+                STATUS _ramu_dl_status TIMEOUT 600 SHOW_PROGRESS)
+            list(GET _ramu_dl_status 0 _ramu_dl_code)
+            if(_ramu_dl_code EQUAL 0)
+                set(_ramu_fetch_ok TRUE)
+                break()
+            endif()
+            message(STATUS
+                "ramulator download failed (attempt ${_attempt}/${PYRAMULATOR_FETCH_RETRIES})")
+        endforeach()
+        if(NOT _ramu_fetch_ok)
+            message(FATAL_ERROR
+                "Failed to download Ramulator from ${PYRAMULATOR_RAMULATOR_TARBALL_URL}.\n"
+                "Check your network connection, or run: git submodule update --init")
+        endif()
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E tar xzf "${_ramu_tar}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+            RESULT_VARIABLE _ramu_tar_result
+        )
+        if(NOT _ramu_tar_result EQUAL 0)
+            message(FATAL_ERROR "Failed to extract the Ramulator tarball")
+        endif()
+        file(GLOB _ramu_extracted "${CMAKE_BINARY_DIR}/ramulator-*")
+        if(NOT _ramu_extracted)
+            message(FATAL_ERROR
+                "Ramulator tarball extracted to an unexpected directory layout")
+        endif()
+        list(GET _ramu_extracted 0 _ramu_extracted_dir)
+        file(RENAME "${_ramu_extracted_dir}" "${CMAKE_BINARY_DIR}/ramulator-src")
+        set(RAMULATOR_SOURCE_DIR "${CMAKE_BINARY_DIR}/ramulator-src")
+        if(NOT EXISTS ${RAMULATOR_SOURCE_DIR}/src/Config.h)
+            message(FATAL_ERROR "Fetched Ramulator tree is missing src/Config.h")
+        endif()
+        message(STATUS "Ramulator fetched to ${RAMULATOR_SOURCE_DIR}")
+    else()
+        message(FATAL_ERROR "Ramulator not found at 'third_party/ramulator'.\n"
+                            "Please run: git submodule update --init")
+    endif()
 endif()
 
 # ramulator is maintained with a Makefile, so the sources are compiled
