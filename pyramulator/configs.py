@@ -330,17 +330,17 @@ def config_dir() -> Path:
         # installs `files()` returns a MultiplexedPath spanning both the
         # source tree and the installed copy, so the CMake-installed
         # data/configs directory is always found.
-        from importlib.resources import files as _pkg_files  # noqa: PLC0415
+        from importlib.resources import files as _pkg_files
     except ImportError:  # Python 3.8
-        _pkg_files = None
+        _pkg_files = None  # type: ignore[assignment]
     if _pkg_files is not None:
         path = Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
         if path.is_dir():
             return path
     # Python 3.8 fallback: locate the installed data directory by walking
     # the package and interpreter search paths.
-    import sys  # noqa: PLC0415
-    from importlib.util import find_spec  # noqa: PLC0415
+    import sys
+    from importlib.util import find_spec
 
     entries: list[str] = []
     spec = find_spec("pyramulator")
