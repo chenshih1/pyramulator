@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from importlib.resources import files as _pkg_files
 from pathlib import Path
 
 SUPPORTED_STANDARDS: list[str] = [
@@ -326,7 +325,35 @@ def theoretical_bandwidth(config: Mapping[str, object], cacheline: int = 64) -> 
 
 def config_dir() -> Path:
     """Path to the reference Ramulator config files bundled with this package."""
-    return Path(str(_pkg_files("pyramulator").joinpath("data").joinpath("configs")))
+    try:
+        # Python >= 3.9: Traversable API; on scikit-build-core editable
+        # installs `files()` returns a MultiplexedPath spanning both the
+        # source tree and the installed copy, so the CMake-installed
+        # data/configs directory is always found.
+        from importlib.resources import files as _pkg_files  # noqa: PLC0415
+    except ImportError:  # Python 3.8
+        _pkg_files = None
+    if _pkg_files is not None:
+        path = Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
+        if path.is_dir():
+            return path
+    # Python 3.8 fallback: locate the installed data directory by walking
+    # the package and interpreter search paths.
+    import sys  # noqa: PLC0415
+    from importlib.util import find_spec  # noqa: PLC0415
+
+    entries: list[str] = []
+    spec = find_spec("pyramulator")
+    if spec is not None and spec.submodule_search_locations:
+        entries.extend(spec.submodule_search_locations)
+    entries.extend(sys.path)
+    for entry in entries:
+        candidate = Path(entry).joinpath("data", "configs")
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        "pyramulator data/configs not found (package data missing?)"
+    )
 
 
 def supported_standards() -> list[str]:
