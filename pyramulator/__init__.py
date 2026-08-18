@@ -91,6 +91,7 @@ def reset_stats() -> None:
 
 class RequestInfo(NamedTuple):
     """Completed request metadata passed to callbacks."""
+
     addr: int
     type: RequestType
     arrive: int
@@ -117,8 +118,9 @@ class Config(_Config):
 
     _DEFAULTS: ClassVar[dict[str, str]] = {"channels": "1", "ranks": "1"}
 
-    def __init__(self, config_file: str | os.PathLike | None = None,
-                 **kwargs: Any) -> None:
+    def __init__(
+        self, config_file: str | os.PathLike | None = None, **kwargs: Any
+    ) -> None:
         if config_file is not None:
             super().__init__(str(config_file))
         else:
@@ -159,26 +161,29 @@ class Config(_Config):
         if standard not in supported_standards():
             raise ValueError(
                 f"unsupported standard '{standard}', "
-                f"choose from: {supported_standards()}")
+                f"choose from: {supported_standards()}"
+            )
 
         key = _standard_key(standard)
         speed = self["speed"]
         if speed and speed not in SPEED_GRADES.get(key, []):
             raise ValueError(
                 f"invalid speed '{speed}' for {standard}, "
-                f"choose from: {SPEED_GRADES.get(key, [])}")
+                f"choose from: {SPEED_GRADES.get(key, [])}"
+            )
 
         org = self["org"]
         if org and org not in ORGANIZATIONS.get(key, []):
             raise ValueError(
                 f"invalid org '{org}' for {standard}, "
-                f"choose from: {ORGANIZATIONS.get(key, [])}")
+                f"choose from: {ORGANIZATIONS.get(key, [])}"
+            )
 
         mapping = self["mapping"]
         if mapping and mapping not in SUPPORTED_MAPPINGS:
             raise ValueError(
-                f"invalid mapping '{mapping}', "
-                f"choose from: {SUPPORTED_MAPPINGS}")
+                f"invalid mapping '{mapping}', choose from: {SUPPORTED_MAPPINGS}"
+            )
 
         channels = int(self["channels"])
         ranks = int(self["ranks"])
@@ -208,25 +213,33 @@ class MemorySystem:
             mem.run(1000)
     """
 
-    def __init__(self, config: Config | _Config | dict[str, Any],
-                 cacheline: int = 64, num_cores: int = 1) -> None:
+    def __init__(
+        self,
+        config: Config | _Config | dict[str, Any],
+        cacheline: int = 64,
+        num_cores: int = 1,
+    ) -> None:
         if isinstance(config, dict):
             config = Config(**config)
         standard = config["standard"]
         min_cacheline = MIN_CACHELINE.get(_standard_key(standard), 8)
         if cacheline <= 0 or (cacheline & (cacheline - 1)) != 0:
-            raise ValueError(
-                f"cacheline must be a power of two, got {cacheline}")
+            raise ValueError(f"cacheline must be a power of two, got {cacheline}")
         if cacheline < min_cacheline or cacheline % min_cacheline != 0:
             raise ValueError(
                 f"cacheline {cacheline} is not a multiple of the {standard} "
-                f"minimum channel unit ({min_cacheline} bytes)")
+                f"minimum channel unit ({min_cacheline} bytes)"
+            )
         self._config = config
         self._cacheline = cacheline
         self._impl = _MemorySystem(config, cacheline, num_cores)
         self._clk = 0
-        logger.debug("MemorySystem created: tck=%.3fns, cacheline=%d, cores=%d",
-                     self.tck, cacheline, num_cores)
+        logger.debug(
+            "MemorySystem created: tck=%.3fns, cacheline=%d, cores=%d",
+            self.tck,
+            cacheline,
+            num_cores,
+        )
 
     @property
     def tck(self) -> float:
@@ -247,9 +260,11 @@ class MemorySystem:
     def capacity(self) -> int:
         """Nominal DRAM capacity in bytes (from the org configuration)."""
         return estimate_capacity(
-            self._config["standard"], self._config["org"],
+            self._config["standard"],
+            self._config["org"],
             channels=int(self._config["channels"]),
-            ranks=int(self._config["ranks"]))
+            ranks=int(self._config["ranks"]),
+        )
 
     def tick(self) -> None:
         """Advance simulation by one DRAM clock cycle."""
@@ -304,8 +319,13 @@ class MemorySystem:
         serviced by the DRAM. Returns the cycle count."""
         return self.run_until_idle(max_cycles)
 
-    def send(self, addr: int, request_type: RequestType, core_id: int = 0,
-             callback: Callable[[RequestInfo], None] | None = None) -> bool:
+    def send(
+        self,
+        addr: int,
+        request_type: RequestType,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> bool:
         """Send a memory request. Returns True if accepted, False if queue full.
 
         callback receives a RequestInfo(addr, type, arrive, depart, core_id)
@@ -317,35 +337,44 @@ class MemorySystem:
         if request_type == RequestType.WRITE:
             accepted = self._impl.send(addr, request_type, core_id, None)
             if accepted and callback is not None:
-                callback(RequestInfo(addr, request_type, self.clk, self.clk,
-                                     core_id))
+                callback(RequestInfo(addr, request_type, self.clk, self.clk, core_id))
             return accepted
 
         if callback is not None:
             user_cb = callback
 
             def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
-                                    core_id_))
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
 
             return self._impl.send(addr, request_type, core_id, _wrap)
         return self._impl.send(addr, request_type, core_id, None)
 
-    def send_read(self, addr: int, core_id: int = 0,
-                  callback: Callable[[RequestInfo], None] | None = None
-                  ) -> bool:
+    def send_read(
+        self,
+        addr: int,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> bool:
         """Send a READ request."""
         return self.send(addr, RequestType.READ, core_id, callback)
 
-    def send_write(self, addr: int, core_id: int = 0,
-                   callback: Callable[[RequestInfo], None] | None = None
-                   ) -> bool:
+    def send_write(
+        self,
+        addr: int,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> bool:
         """Send a WRITE request."""
         return self.send(addr, RequestType.WRITE, core_id, callback)
 
-    def send_reads(self, addrs: Iterable[int], core_id: int = 0,
-                   callback: Callable[[RequestInfo], None] | None = None
-                   ) -> list[bool]:
+    def send_reads(
+        self,
+        addrs: Iterable[int],
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> list[bool]:
         """Send multiple READ requests in one C++ call. Returns accept flags.
 
         Completions arrive through callback as individual RequestInfo objects
@@ -354,34 +383,42 @@ class MemorySystem:
             user_cb = callback
 
             def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
-                                    core_id_))
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
 
-            return list(self._impl.send_batch(
-                addrs, RequestType.READ, core_id, _wrap))
-        return list(self._impl.send_batch(
-            addrs, RequestType.READ, core_id, None))
+            return list(self._impl.send_batch(addrs, RequestType.READ, core_id, _wrap))
+        return list(self._impl.send_batch(addrs, RequestType.READ, core_id, None))
 
-    def send_writes(self, addrs: Iterable[int], core_id: int = 0,
-                    callback: Callable[[RequestInfo], None] | None = None
-                    ) -> list[bool]:
+    def send_writes(
+        self,
+        addrs: Iterable[int],
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> list[bool]:
         """Send multiple WRITE requests in one C++ call. Returns accept flags.
 
         Like gem5, writes complete upon acceptance, so accepted requests fire
         callback immediately."""
-        accepted = list(self._impl.send_batch(
-            addrs, RequestType.WRITE, core_id, None))
+        accepted = list(self._impl.send_batch(addrs, RequestType.WRITE, core_id, None))
         if callback is not None:
             for addr, ok in zip(addrs, accepted):
                 if ok:
-                    callback(RequestInfo(addr, RequestType.WRITE,
-                                         self.clk, self.clk, core_id))
+                    callback(
+                        RequestInfo(
+                            addr, RequestType.WRITE, self.clk, self.clk, core_id
+                        )
+                    )
         return accepted
 
-    def send_reads_range(self, start: int, count: int,
-                         stride: int | None = None, core_id: int = 0,
-                         callback: Callable[[RequestInfo], None] | None = None
-                         ) -> list[bool]:
+    def send_reads_range(
+        self,
+        start: int,
+        count: int,
+        stride: int | None = None,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> list[bool]:
         """Send count READ requests at start, start+stride, ... in one call.
 
         Stride defaults to the memory system's cacheline. Avoids
@@ -393,37 +430,60 @@ class MemorySystem:
             user_cb = callback
 
             def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
-                                    core_id_))
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
 
-            return list(self._impl.send_range(
-                start, count, stride, RequestType.READ, core_id, _wrap))
-        return list(self._impl.send_range(
-            start, count, stride, RequestType.READ, core_id, None))
+            return list(
+                self._impl.send_range(
+                    start, count, stride, RequestType.READ, core_id, _wrap
+                )
+            )
+        return list(
+            self._impl.send_range(start, count, stride, RequestType.READ, core_id, None)
+        )
 
-    def send_writes_range(self, start: int, count: int,
-                          stride: int | None = None, core_id: int = 0,
-                          callback: Callable[[RequestInfo], None] | None = None
-                          ) -> list[bool]:
+    def send_writes_range(
+        self,
+        start: int,
+        count: int,
+        stride: int | None = None,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> list[bool]:
         """Send count WRITE requests at start, start+stride, ... in one call.
 
         Stride defaults to the memory system's cacheline. Writes complete
         upon acceptance, so accepted requests fire callback immediately."""
         if stride is None:
             stride = self._cacheline
-        accepted = list(self._impl.send_range(
-            start, count, stride, RequestType.WRITE, core_id, None))
+        accepted = list(
+            self._impl.send_range(
+                start, count, stride, RequestType.WRITE, core_id, None
+            )
+        )
         if callback is not None:
             for i, ok in enumerate(accepted):
                 if ok:
-                    callback(RequestInfo(start + i * stride,
-                                         RequestType.WRITE,
-                                         self.clk, self.clk, core_id))
+                    callback(
+                        RequestInfo(
+                            start + i * stride,
+                            RequestType.WRITE,
+                            self.clk,
+                            self.clk,
+                            core_id,
+                        )
+                    )
         return accepted
 
-    def drive(self, addrs: Iterable[int], queue_depth: int = 32,
-              batch: int = 100, max_cycles: int = 1_000_000,
-              callback: Callable[[RequestInfo], None] | None = None) -> int:
+    def drive(
+        self,
+        addrs: Iterable[int],
+        queue_depth: int = 32,
+        batch: int = 100,
+        max_cycles: int = 1_000_000,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> int:
         """Run the full drive loop inside C++ for a list of addresses.
 
         Requests are issued until `queue_depth` are in flight, then the DRAM
@@ -435,23 +495,31 @@ class MemorySystem:
             user_cb = callback
 
             def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
-                                    core_id_))
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
 
             n, issued, events = self._impl.drive(
-                addrs, queue_depth, batch, max_cycles, _wrap)
+                addrs, queue_depth, batch, max_cycles, _wrap
+            )
         else:
             n, issued, events = self._impl.drive(
-                addrs, queue_depth, batch, max_cycles, None)
+                addrs, queue_depth, batch, max_cycles, None
+            )
         self._clk += n
         self._dispatch(events)
         return issued
 
-    def drive_range(self, start: int, count: int, stride: int | None = None,
-                    queue_depth: int = 32, batch: int = 100,
-                    max_cycles: int = 1_000_000,
-                    callback: Callable[[RequestInfo], None] | None = None
-                    ) -> int:
+    def drive_range(
+        self,
+        start: int,
+        count: int,
+        stride: int | None = None,
+        queue_depth: int = 32,
+        batch: int = 100,
+        max_cycles: int = 1_000_000,
+        callback: Callable[[RequestInfo], None] | None = None,
+    ) -> int:
         """Drive loop over a contiguous address range (start, +stride, ...).
 
         Stride defaults to the memory system's cacheline. Returns the number
@@ -462,14 +530,17 @@ class MemorySystem:
             user_cb = callback
 
             def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(RequestInfo(addr_, RequestType(type_), arrive, depart,
-                                    core_id_))
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
 
             n, issued, events = self._impl.drive_range(
-                start, count, stride, queue_depth, batch, max_cycles, _wrap)
+                start, count, stride, queue_depth, batch, max_cycles, _wrap
+            )
         else:
             n, issued, events = self._impl.drive_range(
-                start, count, stride, queue_depth, batch, max_cycles, None)
+                start, count, stride, queue_depth, batch, max_cycles, None
+            )
         self._clk += n
         self._dispatch(events)
         return issued
@@ -493,10 +564,14 @@ class MemorySystem:
         without calling finish()."""
         return summarize_metrics(self.get_stats(), self._cacheline, self.tck)
 
-    def send_blocking(self, addr: int, request_type: RequestType,
-                      core_id: int = 0,
-                      callback: Callable[[RequestInfo], None] | None = None,
-                      max_wait: int = 1_000_000) -> int:
+    def send_blocking(
+        self,
+        addr: int,
+        request_type: RequestType,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+        max_wait: int = 1_000_000,
+    ) -> int:
         """Send a request, ticking until it is accepted.
 
         Returns the number of cycles waited. Raises RuntimeError if the
@@ -508,22 +583,29 @@ class MemorySystem:
             if waited >= max_wait:
                 raise RuntimeError(
                     f"request to 0x{addr:x} not accepted within "
-                    f"{max_wait} cycles (queue still full)")
+                    f"{max_wait} cycles (queue still full)"
+                )
         return waited
 
-    def send_read_blocking(self, addr: int, core_id: int = 0,
-                           callback: Callable[[RequestInfo], None] | None = None,
-                           max_wait: int = 1_000_000) -> int:
+    def send_read_blocking(
+        self,
+        addr: int,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+        max_wait: int = 1_000_000,
+    ) -> int:
         """Blocking variant of send_read. Returns cycles waited."""
-        return self.send_blocking(addr, RequestType.READ, core_id, callback,
-                                  max_wait)
+        return self.send_blocking(addr, RequestType.READ, core_id, callback, max_wait)
 
-    def send_write_blocking(self, addr: int, core_id: int = 0,
-                            callback: Callable[[RequestInfo], None] | None = None,
-                            max_wait: int = 1_000_000) -> int:
+    def send_write_blocking(
+        self,
+        addr: int,
+        core_id: int = 0,
+        callback: Callable[[RequestInfo], None] | None = None,
+        max_wait: int = 1_000_000,
+    ) -> int:
         """Blocking variant of send_write. Returns cycles waited."""
-        return self.send_blocking(addr, RequestType.WRITE, core_id, callback,
-                                  max_wait)
+        return self.send_blocking(addr, RequestType.WRITE, core_id, callback, max_wait)
 
     def set_write_queue_watermark(self, high: float = 0.8, low: float = 0.2) -> None:
         """Set write queue watermarks that control read/write scheduling."""
@@ -536,8 +618,10 @@ class MemorySystem:
         self._impl.finish()
 
     def __repr__(self) -> str:
-        return (f"MemorySystem(tck={self.tck:.3f}ns, clk={self._clk}, "
-                f"pending={self.pending})")
+        return (
+            f"MemorySystem(tck={self.tck:.3f}ns, clk={self._clk}, "
+            f"pending={self.pending})"
+        )
 
     def __enter__(self) -> MemorySystem:
         return self

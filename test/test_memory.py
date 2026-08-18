@@ -13,9 +13,15 @@ class TestMemorySystem:
         assert mem.pending == 0
 
     def test_create_from_dict(self):
-        mem = MemorySystem({"standard": "DDR4", "channels": "1",
-                            "ranks": "1", "speed": "DDR4_2400R",
-                            "org": "DDR4_4Gb_x8"})
+        mem = MemorySystem(
+            {
+                "standard": "DDR4",
+                "channels": "1",
+                "ranks": "1",
+                "speed": "DDR4_2400R",
+                "org": "DDR4_4Gb_x8",
+            }
+        )
         assert mem.tck > 0
 
     def test_tick(self, ddr4_config):
@@ -69,16 +75,16 @@ class TestMemorySystem:
     def test_send_reads_batch(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         results = []
-        mem.send_reads([0x0, 0x40, 0x80],
-                       callback=lambda info: results.append(info))
+        mem.send_reads([0x0, 0x40, 0x80], callback=lambda info: results.append(info))
         mem.run_until_idle()
         assert len(results) == 3
 
     def test_send_writes_batch(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         results = []
-        mem.send_writes([0x0, 0x40, 0x80, 0xC0] * 8,
-                                   callback=lambda info: results.append(info))
+        mem.send_writes(
+            [0x0, 0x40, 0x80, 0xC0] * 8, callback=lambda info: results.append(info)
+        )
         mem.run(10000)
         assert len(results) > 0
 
@@ -95,24 +101,27 @@ class TestMemorySystem:
         assert "tck=" in r
 
     def test_multi_core(self):
-        cfg = Config(standard="DDR4", channels=1,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
+        cfg = Config(standard="DDR4", channels=1, speed="DDR4_2400R", org="DDR4_4Gb_x8")
         mem = MemorySystem(cfg, num_cores=4)
         results = []
         for core in range(4):
-            mem.send_read(core * 0x1000, core_id=core,
-                          callback=lambda info: results.append(info))
+            mem.send_read(
+                core * 0x1000, core_id=core, callback=lambda info: results.append(info)
+            )
         mem.run_until_idle()
         assert len(results) == 4
 
 
 class TestMultiStandard:
-    @pytest.mark.parametrize("standard,speed,org", [
-        ("DDR3", "DDR3_1600K", "DDR3_2Gb_x8"),
-        ("DDR4", "DDR4_2400R", "DDR4_4Gb_x8"),
-        ("LPDDR3", "LPDDR3_1600", "LPDDR3_8Gb_x32"),
-        ("LPDDR4", "LPDDR4_2400", "LPDDR4_8Gb_x16"),
-    ])
+    @pytest.mark.parametrize(
+        "standard,speed,org",
+        [
+            ("DDR3", "DDR3_1600K", "DDR3_2Gb_x8"),
+            ("DDR4", "DDR4_2400R", "DDR4_4Gb_x8"),
+            ("LPDDR3", "LPDDR3_1600", "LPDDR3_8Gb_x32"),
+            ("LPDDR4", "LPDDR4_2400", "LPDDR4_8Gb_x16"),
+        ],
+    )
     def test_standard_read_completes(self, standard, speed, org):
         cfg = Config(standard=standard, speed=speed, org=org)
         mem = MemorySystem(cfg)
@@ -123,8 +132,7 @@ class TestMultiStandard:
         assert results[0].latency > 0
 
     def test_multichannel(self):
-        cfg = Config(standard="DDR4", channels=2,
-                     speed="DDR4_2400R", org="DDR4_4Gb_x8")
+        cfg = Config(standard="DDR4", channels=2, speed="DDR4_2400R", org="DDR4_4Gb_x8")
         mem = MemorySystem(cfg)
         results = []
         for i in range(16):
@@ -142,8 +150,9 @@ class TestBenchmark:
 
         for i in range(num_requests):
             addr = i * 64
-            while not mem.send_read(addr, callback=lambda info:
-                                    latencies.append(info.latency)):
+            while not mem.send_read(
+                addr, callback=lambda info: latencies.append(info.latency)
+            ):
                 mem.tick()
 
         mem.run_until_idle()
@@ -155,14 +164,16 @@ class TestBenchmark:
     def test_random_latency_higher_than_sequential(self):
         """Random access should have higher avg latency than sequential."""
         import random
+
         rng = random.Random(42)
         cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
 
         seq_lats = []
         with MemorySystem(cfg) as mem:
             for i in range(64):
-                while not mem.send_read(i * 64, callback=lambda info:
-                                        seq_lats.append(info.latency)):
+                while not mem.send_read(
+                    i * 64, callback=lambda info: seq_lats.append(info.latency)
+                ):
                     mem.tick()
             mem.run_until_idle()
 
@@ -170,8 +181,9 @@ class TestBenchmark:
         addrs = [rng.randrange(0, 1 << 24, 64) for _ in range(64)]
         with MemorySystem(cfg) as mem:
             for addr in addrs:
-                while not mem.send_read(addr, callback=lambda info:
-                                        rand_lats.append(info.latency)):
+                while not mem.send_read(
+                    addr, callback=lambda info: rand_lats.append(info.latency)
+                ):
                     mem.tick()
             mem.run_until_idle()
 
@@ -212,9 +224,14 @@ class TestBenchmark:
 
     def test_multichannel_throughput_scales(self):
         """2-channel should achieve higher throughput than 1-channel."""
+
         def measure_bw(channels):
-            cfg = Config(standard="DDR4", channels=channels,
-                         speed="DDR4_2400R", org="DDR4_4Gb_x8")
+            cfg = Config(
+                standard="DDR4",
+                channels=channels,
+                speed="DDR4_2400R",
+                org="DDR4_4Gb_x8",
+            )
             mem = MemorySystem(cfg)
             completed = [0]
             first = [None]
@@ -280,6 +297,7 @@ class TestStats:
         import gc
 
         from pyramulator import get_stats
+
         mem = MemorySystem(ddr4_config)
         try:
             mem2 = MemorySystem(ddr4_config)
@@ -302,8 +320,9 @@ class TestRangeSend:
     def test_reads_range(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         completed = []
-        accepted = mem.send_reads_range(0, 32, 64,
-                                        callback=lambda i: completed.append(i))
+        accepted = mem.send_reads_range(
+            0, 32, 64, callback=lambda i: completed.append(i)
+        )
         assert all(accepted)
         mem.flush()
         assert len(completed) == 32
@@ -312,8 +331,7 @@ class TestRangeSend:
 
     def test_reads_range_default_stride(self, ddr4_config):
         """Stride defaults to the cacheline."""
-        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400",
-                     org="LPDDR4_8Gb_x16")
+        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400", org="LPDDR4_8Gb_x16")
         mem = MemorySystem(cfg, cacheline=32)
         completed = []
         mem.send_reads_range(0, 8, callback=lambda i: completed.append(i))
@@ -324,8 +342,9 @@ class TestRangeSend:
     def test_writes_range(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         completed = []
-        accepted = mem.send_writes_range(0, 8, 64,
-                                         callback=lambda i: completed.append(i))
+        accepted = mem.send_writes_range(
+            0, 8, 64, callback=lambda i: completed.append(i)
+        )
         assert all(accepted)
         assert len(completed) == 8
         assert all(i.type == RequestType.WRITE for i in completed)
@@ -333,10 +352,8 @@ class TestRangeSend:
     def test_core_id_in_request_info(self, ddr4_config):
         mem = MemorySystem(ddr4_config, num_cores=4)
         infos = []
-        mem.send_read(0x1000, core_id=2,
-                      callback=lambda i: infos.append(i))
-        mem.send_read(0x2000, core_id=3,
-                      callback=lambda i: infos.append(i))
+        mem.send_read(0x1000, core_id=2, callback=lambda i: infos.append(i))
+        mem.send_read(0x2000, core_id=3, callback=lambda i: infos.append(i))
         mem.run_until_idle()
         assert {i.core_id for i in infos} == {2, 3}
         assert infos[0].core_id == 2
@@ -368,8 +385,7 @@ class TestBlockingSend:
     def test_blocking_read(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         results = []
-        waited = mem.send_read_blocking(0x1000,
-                                        callback=lambda i: results.append(i))
+        waited = mem.send_read_blocking(0x1000, callback=lambda i: results.append(i))
         assert waited >= 0
         mem.run_until_idle()
         assert len(results) == 1
@@ -380,7 +396,8 @@ class TestBlockingSend:
         total_waited = 0
         for i in range(64):
             total_waited += mem.send_read_blocking(
-                i * 64, callback=lambda i: results.append(i))
+                i * 64, callback=lambda i: results.append(i)
+            )
         mem.run_until_idle()
         assert total_waited >= 0
         assert len(results) == 64
@@ -397,8 +414,7 @@ class TestCachelineValidation:
             MemorySystem(cfg, cacheline=32)
 
     def test_lpddr4_small_cacheline_ok(self):
-        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400",
-                     org="LPDDR4_8Gb_x16")
+        cfg = Config(standard="LPDDR4", speed="LPDDR4_2400", org="LPDDR4_8Gb_x16")
         mem = MemorySystem(cfg, cacheline=32)
         assert mem.tck > 0
 
@@ -407,8 +423,9 @@ class TestDrive:
     def test_drive_completes_all(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         done = []
-        issued = mem.drive([i * 64 for i in range(64)],
-                           callback=lambda i: done.append(i))
+        issued = mem.drive(
+            [i * 64 for i in range(64)], callback=lambda i: done.append(i)
+        )
         assert issued == 64
         assert len(done) == 64
         assert mem.pending == 0
@@ -432,8 +449,9 @@ class TestDrive:
         def run_drive():
             m = MemorySystem(ddr4_config)
             done = []
-            issued = m.drive_range(0, 128, 64, batch=200,
-                                   callback=lambda i: done.append(i))
+            issued = m.drive_range(
+                0, 128, 64, batch=200, callback=lambda i: done.append(i)
+            )
             return m, issued, len(done)
 
         m1, done1 = run_manual()

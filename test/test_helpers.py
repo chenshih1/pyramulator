@@ -80,6 +80,7 @@ class TestBenchmarkHelpers:
 
     def test_benchmark_all(self, ddr4_config):
         from pyramulator import benchmark_all
+
         result = benchmark_all(ddr4_config, num_requests=64)
         assert result["latency"]["completed"] == 64
         assert result["bandwidth"]["completed"] == 64

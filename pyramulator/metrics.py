@@ -17,8 +17,9 @@ _ROW_CONFLICTS_RE = re.compile(r"read_row_conflicts_channel_(\d+)_core$")
 
 
 def _sum_matching(stats: Mapping[str, object], pattern: re.Pattern) -> float:
-    return sum(v for k, v in stats.items()
-               if pattern.match(k) and isinstance(v, (int, float)))
+    return sum(
+        v for k, v in stats.items() if pattern.match(k) and isinstance(v, (int, float))
+    )
 
 
 def _num(stats: Mapping[str, object], key: str) -> float:
@@ -42,8 +43,9 @@ def row_hit_rate(stats: Mapping[str, object]) -> float:
     return hits / total if total else 0.0
 
 
-def measured_bandwidth(stats: Mapping[str, object], cacheline: int,
-                       tck_ns: float) -> float:
+def measured_bandwidth(
+    stats: Mapping[str, object], cacheline: int, tck_ns: float
+) -> float:
     """Sustained bandwidth in GB/s over the whole simulated window.
 
     Uses the total simulated time (dram_cycles x tck), so idle cycles are
@@ -57,8 +59,9 @@ def measured_bandwidth(stats: Mapping[str, object], cacheline: int,
     return requests * cacheline / seconds / 1e9
 
 
-def summarize_metrics(stats: Mapping[str, object], cacheline: int,
-                      tck_ns: float) -> dict[str, float]:
+def summarize_metrics(
+    stats: Mapping[str, object], cacheline: int, tck_ns: float
+) -> dict[str, float]:
     """One-call summary dict for event-driven architecture reporting."""
     latency = avg_read_latency(stats)
     return {
