@@ -9,6 +9,8 @@ Each lane runs a 3-phase pipeline per tile:
 Demonstrates: multi-core traffic, backpressure, callbacks, latency measurement.
 """
 
+from __future__ import annotations
+
 import logging
 
 from pyramulator import Config, MemorySystem

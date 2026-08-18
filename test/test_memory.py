@@ -1,5 +1,7 @@
 """MemorySystem core simulation tests."""
 
+from __future__ import annotations
+
 import pytest
 
 from pyramulator import Config, MemorySystem, RequestType

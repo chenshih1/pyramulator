@@ -14,6 +14,8 @@ Validates the result against numpy (C == A @ B) and reports cycles,
 effective DRAM bandwidth, and row-buffer hit rate.
 """
 
+from __future__ import annotations
+
 import sys
 import time
 from collections import deque

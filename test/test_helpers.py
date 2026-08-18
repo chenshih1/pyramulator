@@ -1,5 +1,7 @@
 """Metrics, workload, and benchmark helper tests."""
 
+from __future__ import annotations
+
 import pytest
 
 from pyramulator import (

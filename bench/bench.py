@@ -1,5 +1,7 @@
 """Benchmark memory latency and throughput across DRAM configurations."""
 
+from __future__ import annotations
+
 import logging
 
 from pyramulator import Config, benchmark_bandwidth, benchmark_latency

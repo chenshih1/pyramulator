@@ -1,5 +1,7 @@
 """Configuration-related tests."""
 
+from __future__ import annotations
+
 import pytest
 
 from pyramulator import (

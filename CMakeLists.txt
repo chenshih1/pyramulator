@@ -5,6 +5,33 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+
+# Emit per-function/per-data sections and let the linker drop the ones we
+# never call: the vendored simulator ships many standards/technologies the
+# wrapper can never exercise in a single run.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-ffunction-sections -fdata-sections)
+    if(APPLE)
+        add_link_options("-Wl,-dead_strip")
+    else()
+        add_link_options("-Wl,--gc-sections")
+    endif()
+endif()
+
+# Whole-program optimization across the binding and the vendored simulator.
+# Release-only so debug rebuilds stay fast; degrades gracefully on
+# toolchains without IPO support.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT _ipo_supported)
+if(_ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+else()
+    message(STATUS "LTO/IPO not supported by this toolchain; skipping")
+endif()
+
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(pybind11 CONFIG REQUIRED)
 
@@ -109,7 +136,14 @@ pybind11_add_module(_core src/bindings.cpp ${RAMULATOR_SOURCES})
 
 target_include_directories(_core PRIVATE ${RAMULATOR_SRC})
 target_compile_definitions(_core PRIVATE RAMULATOR)
-target_compile_options(_core PRIVATE -O3)
+
+# Scope strict warnings to our own binding sources only; the vendored
+# simulator compiles with its own (unset) warning policy.
+if(MSVC)
+    set_source_files_properties(src/bindings.cpp PROPERTIES COMPILE_OPTIONS /W4)
+else()
+    set_source_files_properties(src/bindings.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+endif()
 
 # ramulator's StatType.h uses uintN_t without including <cstdint>; it
 # compiles by accident on some toolchains via transitive includes but fails
