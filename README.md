@@ -1,8 +1,9 @@
 # pyramulator
 
 [![CI](https://img.shields.io/github/actions/workflow/status/chenshih1/pyramulator/ci.yml?branch=master&label=CI)](https://github.com/chenshih1/pyramulator/actions)
+[![Release](https://img.shields.io/github/v/release/chenshih1/pyramulator?label=release&logo=github)](https://github.com/chenshih1/pyramulator/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 
 Python bindings for the [Ramulator](https://github.com/CMU-SAFARI/ramulator)
 DRAM simulator.
@@ -31,17 +32,31 @@ of Ramulator.
 
 ## Install
 
-Ramulator is an external dependency, registered as a git submodule at
-`third_party/ramulator` (pinned to a fixed commit), so the build needs
-network access.
+Build from source (requires Python >= 3.8 and a C++17 compiler; pybind11
+and CMake are resolved automatically):
 
 ```bash
-git clone --recurse-submodules <repo-url>   # or: git submodule update --init
+git clone --recurse-submodules https://github.com/chenshih1/pyramulator.git
+cd pyramulator
 pip install .
 ```
 
-When building from an sdist (which has no submodule), CMake falls back to
-fetching ramulator from its upstream repository via `FetchContent`.
+Ramulator is an external dependency pinned at `third_party/ramulator`
+(a git submodule).  If it is missing, the build downloads the pinned
+source tarball automatically — with retries and a configurable mirror
+(`-DPYRAMULATOR_RAMULATOR_TARBALL_URL=...`, disable with
+`-DPYRAMULATOR_FETCH_RAMULATOR=OFF`) — so no manual `git submodule
+update --init` is needed.
+
+Source distributions are attached to the
+[GitHub Releases](https://github.com/chenshih1/pyramulator/releases) page:
+
+```bash
+pip install pyramulator-0.3.0.tar.gz
+```
+
+Release builds enable LTO and link Ramulator directly into the extension
+module.
 
 ## Quick start
 
@@ -202,7 +217,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"      # includes test, ruff, mypy, pytest-cov
 
-pytest                       # 79 tests, ~95% coverage
+pytest                       # 95 tests, ~95% coverage
 ruff check pyramulator/ test/ bench/ examples/
 mypy pyramulator/
 python bench/bench.py
