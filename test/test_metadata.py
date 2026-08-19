@@ -24,4 +24,4 @@ class TestVersionConsistency:
         assert pyramulator.__version__ == _toml_version()
 
     def test_expected_version(self):
-        assert pyramulator.__version__ == "0.1.0"
+        assert pyramulator.__version__ == "0.2.0"
