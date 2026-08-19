@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, Callable, ClassVar, Literal, NamedTuple
 
 from pyramulator._core import (
@@ -153,8 +153,8 @@ class Config(_Config):
             logger.debug("Config overrides from %s: %s", path, overrides)
         return cls(**options)
 
-    def validate(self) -> bool:
-        """Check that standard/speed/org are valid. Raises ValueError if not."""
+    def validate(self) -> None:
+        """Check that standard/speed/org/mapping are valid; raises ValueError."""
         standard = self["standard"]
         if not standard:
             raise ValueError("missing required field: standard")
@@ -192,14 +192,50 @@ class Config(_Config):
         if ranks < 1 or (ranks & (ranks - 1)) != 0:
             raise ValueError(f"ranks must be a power of 2, got {ranks}")
 
-        return True
-
     def __repr__(self) -> str:
         std = self["standard"] or "?"
         speed = self["speed"] or "?"
         org = self["org"] or "?"
         ch = self["channels"]
         return f"Config(standard={std!r}, speed={speed!r}, org={org!r}, channels={ch})"
+
+    # -- Attribute access --------------------------------------------------
+    #
+    # The underlying C++ Config is dict-like; these properties expose the
+    # common fields as attributes (cfg.standard instead of cfg["standard"]).
+
+    def _get(self, key: str) -> str:
+        return self[key] if self.contains(key) else ""
+
+    @property
+    def standard(self) -> str:
+        """DRAM standard (e.g. ``"DDR4"``)."""
+        return self._get("standard")
+
+    @property
+    def speed(self) -> str:
+        """Speed grade (e.g. ``"DDR4_2400R"``)."""
+        return self._get("speed")
+
+    @property
+    def org(self) -> str:
+        """Organization/density (e.g. ``"DDR4_4Gb_x8"``)."""
+        return self._get("org")
+
+    @property
+    def mapping(self) -> str:
+        """Address mapping scheme."""
+        return self._get("mapping")
+
+    @property
+    def channels(self) -> int:
+        """Number of channels."""
+        return int(self["channels"])
+
+    @property
+    def ranks(self) -> int:
+        """Number of ranks per channel."""
+        return int(self["ranks"])
 
 
 class MemorySystem:
@@ -208,9 +244,16 @@ class MemorySystem:
     Examples:
         cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
 
+        # Push model: completion callbacks.
         with MemorySystem(cfg) as mem:
             mem.send_read(0x1000, callback=lambda info: print(info.latency))
             mem.run(1000)
+
+        # Pull model: consume completions in a for loop.
+        mem = MemorySystem(cfg, collect_events=True)
+        mem.send_reads(range(0x1000, 0x1000 + 64 * 8, 64))
+        for info in mem.completions():
+            print(info.latency)
     """
 
     def __init__(
@@ -218,6 +261,8 @@ class MemorySystem:
         config: Config | _Config | dict[str, Any],
         cacheline: int = 64,
         num_cores: int = 1,
+        *,
+        collect_events: bool = False,
     ) -> None:
         if isinstance(config, dict):
             config = Config(**config)
@@ -232,6 +277,8 @@ class MemorySystem:
             )
         self._config = config
         self._cacheline = cacheline
+        self._collect_events = collect_events
+        self._collected: list[RequestInfo] = []
         self._impl = _MemorySystem(config, cacheline, num_cores)
         self._clk = 0
         logger.debug(
@@ -240,6 +287,35 @@ class MemorySystem:
             cacheline,
             num_cores,
         )
+
+    # -- Event collection (pull model) -------------------------------------
+
+    def _collect(self, addr, type_, arrive, depart, core_id) -> None:
+        self._collected.append(
+            RequestInfo(addr, RequestType(type_), arrive, depart, core_id)
+        )
+
+    def _read_cb(self, callback: Callable[[RequestInfo], None] | None):
+        """Callback to attach to a READ request for the C++ layer.
+
+        A user callback is wrapped so it receives a :class:`RequestInfo`
+        (the C++ layer calls back with raw ``(addr, type, arrive, depart,
+        core_id)``).  Otherwise, in collect_events mode a collector
+        callback is attached so Ramulator records the completion events
+        that :meth:`completions` consumes; outside that mode ``None`` is
+        returned and no completions are recorded."""
+        if callback is not None:
+            user_cb = callback
+
+            def _wrap(addr_, type_, arrive, depart, core_id_):
+                user_cb(
+                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                )
+
+            return _wrap
+        if self._collect_events:
+            return self._collect
+        return None
 
     @property
     def tck(self) -> float:
@@ -266,11 +342,12 @@ class MemorySystem:
             ranks=int(self._config["ranks"]),
         )
 
-    def tick(self) -> None:
-        """Advance simulation by one DRAM clock cycle."""
+    def tick(self) -> int:
+        """Advance simulation by one DRAM clock cycle; returns 1."""
         self._impl.tick()
         self._drain_completed()
         self._clk += 1
+        return 1
 
     def _drain_completed(self):
         """Flush completion events recorded by C++ into user callbacks.
@@ -296,8 +373,8 @@ class MemorySystem:
         if first_exc is not None:
             raise first_exc
 
-    def run(self, cycles: int) -> None:
-        """Advance simulation by the given number of cycles.
+    def run(self, cycles: int) -> int:
+        """Advance simulation by up to *cycles*; returns cycles advanced.
 
         The tick loop runs inside C++ and completion events are dispatched in
         one batch, so long runs avoid per-cycle Python overhead.
@@ -305,19 +382,48 @@ class MemorySystem:
         n, events = self._impl.run(cycles)
         self._clk += n
         self._dispatch(events)
+        return n
 
     def run_until_idle(self, max_cycles: int = 1_000_000) -> int:
-        """Tick until no requests are pending or max_cycles is reached."""
+        """Tick until no requests are pending or max_cycles is reached.
+
+        Returns the number of cycles advanced.
+        """
         n, events = self._impl.run_until_idle(max_cycles)
         self._clk += n
         self._dispatch(events)
-        return self._clk
+        return n
 
     def flush(self, max_cycles: int = 1_000_000) -> int:
         """Write barrier: run until every accepted request — including
         writes, which Ramulator otherwise completes silently — has been
-        serviced by the DRAM. Returns the cycle count."""
+        serviced by the DRAM. Returns the cycles advanced."""
         return self.run_until_idle(max_cycles)
+
+    def completions(self, max_cycles: int = 1_000_000) -> Iterator[RequestInfo]:
+        """Run until idle, yielding each completion as a :class:`RequestInfo`.
+
+        The clock is advanced internally, so no per-cycle ``tick`` loop is
+        needed.  Requires ``MemorySystem(..., collect_events=True)`` and
+        pairs with the ``send_*`` methods (the "pull" model); it is
+        mutually exclusive with passing callbacks to those sends.
+
+        Examples
+        --------
+        >>> cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
+        >>> mem = MemorySystem(cfg, collect_events=True)
+        >>> mem.send_reads(range(0x1000, 0x1000 + 64 * 8, 64))
+        >>> lats = [info.latency for info in mem.completions()]
+        """
+        if not self._collect_events:
+            raise RuntimeError(
+                "completions() requires MemorySystem(..., collect_events=True)"
+            )
+        n, events = self._impl.run_until_idle(max_cycles)
+        self._clk += n
+        self._dispatch(events)
+        collected, self._collected = self._collected, []
+        yield from collected
 
     def send(
         self,
@@ -338,18 +444,11 @@ class MemorySystem:
             accepted = self._impl.send(addr, request_type, core_id, None)
             if accepted and callback is not None:
                 callback(RequestInfo(addr, request_type, self.clk, self.clk, core_id))
+            elif accepted and self._collect_events:
+                self._collect(addr, request_type, self.clk, self.clk, core_id)
             return accepted
 
-        if callback is not None:
-            user_cb = callback
-
-            def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(
-                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
-                )
-
-            return self._impl.send(addr, request_type, core_id, _wrap)
-        return self._impl.send(addr, request_type, core_id, None)
+        return self._impl.send(addr, request_type, core_id, self._read_cb(callback))
 
     def send_read(
         self,
@@ -379,16 +478,12 @@ class MemorySystem:
 
         Completions arrive through callback as individual RequestInfo objects
         once the simulation advances (tick/run)."""
-        if callback is not None:
-            user_cb = callback
-
-            def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(
-                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
-                )
-
-            return list(self._impl.send_batch(addrs, RequestType.READ, core_id, _wrap))
-        return list(self._impl.send_batch(addrs, RequestType.READ, core_id, None))
+        addrs = list(addrs)
+        return list(
+            self._impl.send_batch(
+                addrs, RequestType.READ, core_id, self._read_cb(callback)
+            )
+        )
 
     def send_writes(
         self,
@@ -400,6 +495,7 @@ class MemorySystem:
 
         Like gem5, writes complete upon acceptance, so accepted requests fire
         callback immediately."""
+        addrs = list(addrs)
         accepted = list(self._impl.send_batch(addrs, RequestType.WRITE, core_id, None))
         if callback is not None:
             for addr, ok in zip(addrs, accepted):
@@ -409,6 +505,10 @@ class MemorySystem:
                             addr, RequestType.WRITE, self.clk, self.clk, core_id
                         )
                     )
+        elif self._collect_events:
+            for addr, ok in zip(addrs, accepted):
+                if ok:
+                    self._collect(addr, RequestType.WRITE, self.clk, self.clk, core_id)
         return accepted
 
     def send_reads_range(
@@ -426,21 +526,10 @@ class MemorySystem:
         """
         if stride is None:
             stride = self._cacheline
-        if callback is not None:
-            user_cb = callback
-
-            def _wrap(addr_, type_, arrive, depart, core_id_):
-                user_cb(
-                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
-                )
-
-            return list(
-                self._impl.send_range(
-                    start, count, stride, RequestType.READ, core_id, _wrap
-                )
-            )
         return list(
-            self._impl.send_range(start, count, stride, RequestType.READ, core_id, None)
+            self._impl.send_range(
+                start, count, stride, RequestType.READ, core_id, self._read_cb(callback)
+            )
         )
 
     def send_writes_range(
@@ -473,6 +562,16 @@ class MemorySystem:
                             self.clk,
                             core_id,
                         )
+                    )
+        elif self._collect_events:
+            for i, ok in enumerate(accepted):
+                if ok:
+                    self._collect(
+                        start + i * stride,
+                        RequestType.WRITE,
+                        self.clk,
+                        self.clk,
+                        core_id,
                     )
         return accepted
 
@@ -551,6 +650,11 @@ class MemorySystem:
         Includes bandwidth, read/write latency, row hits/misses, queue
         depths, etc."""
         return self._impl.get_stats()
+
+    @property
+    def stats(self) -> dict[str, object]:
+        """This memory system's statistics as a dict (alias for :meth:`get_stats`)."""
+        return self.get_stats()
 
     def reset_stats(self) -> None:
         """Reset this memory system's statistics to zero (e.g. per phase)."""

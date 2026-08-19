@@ -47,7 +47,7 @@ class TestConfig:
         assert cfg["standard"] == "DDR4"
 
     def test_validate_valid(self, ddr4_config):
-        assert ddr4_config.validate() is True
+        assert ddr4_config.validate() is None
 
     def test_validate_bad_standard(self):
         cfg = Config(standard="DDR5", speed="x", org="y")
@@ -195,7 +195,7 @@ class TestMapping:
             org="DDR3_2Gb_x8",
             mapping="cacheline_interleaving",
         )
-        assert cfg.validate() is True
+        assert cfg.validate() is None
 
     def test_default_mapping_accepted(self):
         cfg = Config(
@@ -204,7 +204,7 @@ class TestMapping:
             org="DDR3_2Gb_x8",
             mapping="defaultmapping",
         )
-        assert cfg.validate() is True
+        assert cfg.validate() is None
 
     def test_invalid_mapping_rejected(self):
         cfg = Config(
@@ -229,3 +229,18 @@ class TestMapping:
         done = []
         mem.drive_range(0, 16, 64, callback=lambda i: done.append(i))
         assert len(done) == 16
+
+    def test_attribute_access(self, ddr4_config):
+        assert ddr4_config.standard == "DDR4"
+        assert ddr4_config.speed == "DDR4_2400R"
+        assert ddr4_config.org == "DDR4_4Gb_x8"
+        assert ddr4_config.channels == 1
+        assert ddr4_config.ranks == 1
+        assert isinstance(ddr4_config.mapping, str)
+
+    def test_attribute_access_matches_dict(self, ddr4_config):
+        cfg = Config(
+            standard="DDR4", channels=4, ranks=2, speed="DDR4_2400R", org="DDR4_4Gb_x8"
+        )
+        assert cfg.channels == int(cfg["channels"])
+        assert cfg.ranks == int(cfg["ranks"])

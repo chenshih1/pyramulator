@@ -108,6 +108,21 @@ For initial bursts, `send_read_blocking(addr)` blocks until accepted;
 `send_reads()` / `send_writes()` / `send_reads_range()` / `send_writes_range()`
 batch many requests in one C++ call.
 
+**Pull model** — prefer consuming completions in a `for` loop over callbacks?
+Create the memory system with `collect_events=True`, send with `send_*`, and
+iterate:
+
+```python
+mem = MemorySystem(cfg, collect_events=True)
+mem.send_reads(range(0x1000, 0x1000 + 64 * 8, 64))
+for info in mem.completions():
+    print(info.latency)   # RequestInfo(addr, type, arrive, depart, core_id)
+```
+
+All time-advancing methods (`tick`, `run`, `run_until_idle`, `flush`) return
+the number of cycles advanced; `Config` fields are also readable as attributes
+(`cfg.standard`, `cfg.speed`, `cfg.org`, `cfg.channels`, `cfg.ranks`).
+
 For a self-contained drive loop — the role gem5's MemCtrl scheduler plays —
 `drive()` / `drive_range()` run the whole backpressure + tick + drain loop
 inside C++:

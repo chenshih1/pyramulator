@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyramulator import Config, MemorySystem, RequestType
+from pyramulator import Config, MemorySystem, RequestInfo, RequestType
 
 
 class TestMemorySystem:
@@ -476,3 +476,36 @@ class TestDrive:
         issued = mem.drive_range(0, 100_000, 64, max_cycles=100)
         assert issued < 100_000  # 超时截断
         assert mem.clk <= 100
+
+    def test_time_advancing_returns_cycles(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        assert mem.tick() == 1
+        assert mem.run(10) == 10
+        mem.send_read(0x1000)
+        assert mem.run_until_idle() >= 0
+        assert mem.flush() >= 0
+
+    def test_stats_property(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        mem.send_read(0x1000)
+        mem.run_until_idle()
+        assert isinstance(mem.stats, dict)
+        assert mem.stats["read_requests"] == 1.0
+
+    def test_completions_pull_model(self, ddr4_config):
+        mem = MemorySystem(ddr4_config, collect_events=True)
+        n_read = 8
+        mem.send_reads(range(0x1000, 0x1000 + 64 * n_read, 64))
+        mem.send_writes(range(0x2000, 0x2000 + 64 * 4, 64))
+        completions = list(mem.completions())
+        assert len(completions) == n_read + 4
+        assert all(isinstance(i, RequestInfo) for i in completions)
+        assert any(i.type == RequestType.READ for i in completions)
+        assert any(i.type == RequestType.WRITE for i in completions)
+        assert all(i.latency >= 0 for i in completions)
+
+    def test_completions_requires_collect_events(self, ddr4_config):
+        mem = MemorySystem(ddr4_config)
+        mem.send_read(0x1000)
+        with pytest.raises(RuntimeError):
+            list(mem.completions())
