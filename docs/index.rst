@@ -3,7 +3,10 @@ pyramulator
 
 **pyramulator** is a discrete-event simulation (DES) framework for hardware
 architecture, with a cycle-accurate DRAM timing model (Ramulator) embedded
-as a Python component.
+as a Python component. Its kernel is a classic **event-scheduling** DES
+with next-event time advance (Banks / Law-Kelton model): a future-event
+list, deterministic simultaneous-event rules, and zero-delay delta
+events.
 
 Quick links
 -----------
@@ -23,6 +26,9 @@ Quick links
    api/hardware
    api/dram
    api/benchmark
+   api/metrics
+   api/workload
+   api/configs
    examples
 
 Indices and tables

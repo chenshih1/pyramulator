@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-27
+
+### Removed (internal engine cleanup)
+
+- Removed unused `MemorySystem` methods from `_engine.py` — blocking
+  sends (`send_blocking`, `send_read_blocking`, `send_write_blocking`),
+  the pull-model `completions()` + `collect_events` support, `finish()`,
+  and the `__enter__`/`__exit__` context manager. `MemorySystem` is the
+  internal engine behind `Dram`; the public `pyramulator` API is
+  unchanged.
+
+### Changed
+
+- `Dram._deliver_completed` extracts `_make_completion_cb` (mypy fix).
+- README: documents configuration helpers (`estimate_capacity`,
+  `theoretical_bandwidth`, `supported_*`), `split_read_write`,
+  `benchmark_all`, and the event-scheduling DES paradigm.
+- docs/: added API pages for `metrics`, `workload`, `configs`.
+
+### Removed (tests)
+
+- Dropped tests for the removed engine methods (5 tests); suite now
+  has 150 tests at 97% coverage.
+
 ## [0.5.0] - 2026-08-27
 
 ### Changed (breaking)
@@ -172,6 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sustained request throughput ~150K req/s with per-request callbacks;
   DRAM simulation ~3.6M cycles/s single channel.
 
+[0.5.1]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.4.0
 [0.1.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.1.0

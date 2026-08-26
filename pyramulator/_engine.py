@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any, ClassVar, Literal, NamedTuple, TypeAlias
+from collections.abc import Callable, Iterable
+from typing import Any, ClassVar, NamedTuple, TypeAlias
 
 from pyramulator._core import (
     Config as _Config,
@@ -210,8 +210,6 @@ class MemorySystem:
         config: Config | _Config | dict[str, Any],
         cacheline: int = 64,
         num_cores: int = 1,
-        *,
-        collect_events: bool = False,
     ) -> None:
         if isinstance(config, dict):
             config = Config(**config)
@@ -226,9 +224,7 @@ class MemorySystem:
             )
         self._config = config
         self._cacheline = cacheline
-        self._collect_events = collect_events
         self._num_cores = num_cores
-        self._collected: list[RequestInfo] = []
         self._impl = _MemorySystem(config, cacheline, num_cores)
         self._clk = 0
         logger.debug(
@@ -236,13 +232,6 @@ class MemorySystem:
             self.tck,
             cacheline,
             num_cores,
-        )
-
-    # -- Event collection (pull model) -------------------------------------
-
-    def _collect(self, addr, type_, arrive_cycle, depart_cycle, core_id) -> None:
-        self._collected.append(
-            RequestInfo(addr, RequestType(type_), arrive_cycle, depart_cycle, core_id)
         )
 
     def _check_core_id(self, core_id: int) -> None:
@@ -268,18 +257,13 @@ class MemorySystem:
         the completion is recorded at the current cycle."""
         if callback is not None:
             callback(RequestInfo(addr, RequestType.WRITE, self.clk, self.clk, core_id))
-        elif self._collect_events:
-            self._collect(addr, RequestType.WRITE, self.clk, self.clk, core_id)
 
     def _read_cb(self, callback: CompletionCallback):
         """Callback to attach to a READ request for the C++ layer.
 
         A user callback is wrapped so it receives a :class:`RequestInfo`
         (the C++ layer calls back with raw ``(addr, type, arrive_cycle,
-        depart_cycle, core_id)``).  Otherwise, in collect_events mode a
-        collector callback is attached so Ramulator records the completion
-        events that :meth:`completions` consumes; outside that mode
-        ``None`` is returned and no completions are recorded."""
+        depart_cycle, core_id)``)."""
         if callback is not None:
             user_cb = callback
 
@@ -291,8 +275,6 @@ class MemorySystem:
                 )
 
             return _wrap
-        if self._collect_events:
-            return self._collect
         return None
 
     @property
@@ -378,31 +360,6 @@ class MemorySystem:
         serviced by the DRAM. Returns the cycles advanced."""
         return self.run_until_idle(max_cycles)
 
-    def completions(self, max_cycles: int = 1_000_000) -> Iterator[RequestInfo]:
-        """Run until idle, yielding each completion as a :class:`RequestInfo`.
-
-        The clock is advanced internally, so no per-cycle ``tick`` loop is
-        needed.  Requires ``MemorySystem(..., collect_events=True)`` and
-        pairs with the ``send_*`` methods (the "pull" model); it is
-        mutually exclusive with passing callbacks to those sends.
-
-        Examples
-        --------
-        >>> cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
-        >>> mem = MemorySystem(cfg, collect_events=True)
-        >>> mem.send_reads(range(0x1000, 0x1000 + 64 * 8, 64))
-        >>> lats = [info.latency for info in mem.completions()]
-        """
-        if not self._collect_events:
-            raise RuntimeError(
-                "completions() requires MemorySystem(..., collect_events=True)"
-            )
-        n, events = self._impl.run_until_idle(max_cycles)
-        self._clk += n
-        self._dispatch(events)
-        collected, self._collected = self._collected, []
-        yield from collected
-
     def send(
         self,
         addr: int,
@@ -447,6 +404,33 @@ class MemorySystem:
         """Send a WRITE request."""
         return self.send(addr, RequestType.WRITE, core_id, callback)
 
+    def _send_batch(
+        self,
+        addrs: Iterable[int],
+        request_type: RequestType,
+        core_id: int,
+        callback: CompletionCallback,
+    ) -> list[bool]:
+        """Send a burst in one C++ call; returns accept flags.
+
+        WRITE completions fire immediately upon acceptance (no upstream
+        write callback); READ completions arrive through *callback*."""
+        addrs = list(addrs)
+        self._check_core_id(core_id)
+        if request_type == RequestType.WRITE:
+            accepted = list(
+                self._impl.send_batch(addrs, RequestType.WRITE, core_id, None)
+            )
+            for addr, ok in zip(addrs, accepted, strict=False):
+                if ok:
+                    self._fire_write_completion(addr, core_id, callback)
+            return accepted
+        return list(
+            self._impl.send_batch(
+                addrs, RequestType.READ, core_id, self._read_cb(callback)
+            )
+        )
+
     def send_reads(
         self,
         addrs: Iterable[int],
@@ -457,13 +441,7 @@ class MemorySystem:
 
         Completions arrive through callback as individual RequestInfo objects
         once the simulation advances (tick/run)."""
-        addrs = list(addrs)
-        self._check_core_id(core_id)
-        return list(
-            self._impl.send_batch(
-                addrs, RequestType.READ, core_id, self._read_cb(callback)
-            )
-        )
+        return self._send_batch(addrs, RequestType.READ, core_id, callback)
 
     def send_writes(
         self,
@@ -475,13 +453,39 @@ class MemorySystem:
 
         Writes complete upon acceptance (no upstream write callback), so
         accepted requests fire callback immediately."""
-        addrs = list(addrs)
+        return self._send_batch(addrs, RequestType.WRITE, core_id, callback)
+
+    def _send_range(
+        self,
+        start: int,
+        count: int,
+        stride: int | None,
+        request_type: RequestType,
+        core_id: int,
+        callback: CompletionCallback,
+    ) -> list[bool]:
+        """Send count requests at start, start+stride, ... in one call.
+
+        WRITE completions fire immediately upon acceptance; READ
+        completions arrive through *callback*."""
+        if stride is None:
+            stride = self._cacheline
         self._check_core_id(core_id)
-        accepted = list(self._impl.send_batch(addrs, RequestType.WRITE, core_id, None))
-        for addr, ok in zip(addrs, accepted, strict=False):
-            if ok:
-                self._fire_write_completion(addr, core_id, callback)
-        return accepted
+        if request_type == RequestType.WRITE:
+            accepted = list(
+                self._impl.send_range(
+                    start, count, stride, RequestType.WRITE, core_id, None
+                )
+            )
+            for i, ok in enumerate(accepted):
+                if ok:
+                    self._fire_write_completion(start + i * stride, core_id, callback)
+            return accepted
+        return list(
+            self._impl.send_range(
+                start, count, stride, RequestType.READ, core_id, self._read_cb(callback)
+            )
+        )
 
     def send_reads_range(
         self,
@@ -496,13 +500,8 @@ class MemorySystem:
         Stride defaults to the memory system's cacheline. Avoids
         materializing the address list in Python; returns accept flags.
         """
-        if stride is None:
-            stride = self._cacheline
-        self._check_core_id(core_id)
-        return list(
-            self._impl.send_range(
-                start, count, stride, RequestType.READ, core_id, self._read_cb(callback)
-            )
+        return self._send_range(
+            start, count, stride, RequestType.READ, core_id, callback
         )
 
     def send_writes_range(
@@ -517,18 +516,9 @@ class MemorySystem:
 
         Stride defaults to the memory system's cacheline. Writes complete
         upon acceptance, so accepted requests fire callback immediately."""
-        if stride is None:
-            stride = self._cacheline
-        self._check_core_id(core_id)
-        accepted = list(
-            self._impl.send_range(
-                start, count, stride, RequestType.WRITE, core_id, None
-            )
+        return self._send_range(
+            start, count, stride, RequestType.WRITE, core_id, callback
         )
-        for i, ok in enumerate(accepted):
-            if ok:
-                self._fire_write_completion(start + i * stride, core_id, callback)
-        return accepted
 
     def drive(
         self,
@@ -600,68 +590,13 @@ class MemorySystem:
         without calling finish()."""
         return summarize_metrics(self.get_stats(), self._cacheline, self.tck)
 
-    def send_blocking(
-        self,
-        addr: int,
-        request_type: RequestType,
-        core_id: int = 0,
-        callback: CompletionCallback = None,
-        max_wait: int = 1_000_000,
-    ) -> int:
-        """Send a request, ticking until it is accepted.
-
-        Returns the number of cycles waited. Raises RuntimeError if the
-        request is not accepted within max_wait cycles."""
-        waited = 0
-        while not self.send(addr, request_type, core_id, callback):
-            self.tick()
-            waited += 1
-            if waited >= max_wait:
-                raise RuntimeError(
-                    f"request to 0x{addr:x} not accepted within "
-                    f"{max_wait} cycles (queue still full)"
-                )
-        return waited
-
-    def send_read_blocking(
-        self,
-        addr: int,
-        core_id: int = 0,
-        callback: CompletionCallback = None,
-        max_wait: int = 1_000_000,
-    ) -> int:
-        """Blocking variant of send_read. Returns cycles waited."""
-        return self.send_blocking(addr, RequestType.READ, core_id, callback, max_wait)
-
-    def send_write_blocking(
-        self,
-        addr: int,
-        core_id: int = 0,
-        callback: CompletionCallback = None,
-        max_wait: int = 1_000_000,
-    ) -> int:
-        """Blocking variant of send_write. Returns cycles waited."""
-        return self.send_blocking(addr, RequestType.WRITE, core_id, callback, max_wait)
-
     def set_write_queue_watermark(self, high: float = 0.8, low: float = 0.2) -> None:
         """Set write queue watermarks that control read/write scheduling."""
         self._impl.set_high_writeq_watermark(high)
         self._impl.set_low_writeq_watermark(low)
-
-    def finish(self) -> None:
-        """Finalize simulation and flush statistics."""
-        logger.debug("MemorySystem finished: %d cycles simulated", self._clk)
-        self._impl.finish()
 
     def __repr__(self) -> str:
         return (
             f"MemorySystem(tck={self.tck:.3f}ns, clk={self._clk}, "
             f"pending={self.pending})"
         )
-
-    def __enter__(self) -> MemorySystem:
-        return self
-
-    def __exit__(self, *exc: object) -> Literal[False]:
-        self.finish()
-        return False

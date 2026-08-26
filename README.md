@@ -75,9 +75,13 @@ print(completed[0].latency)   # latency in DRAM clock cycles
 
 ## The DES kernel
 
-Time is an integer count of picoseconds. The `Simulator` never advances
-time past an event without processing it — a run that only touches the
-DRAM in cycle 0 and cycle 4000 advances straight from 0 to 4000:
+The kernel is a classic **event-scheduling** discrete-event simulation
+with **next-event time advance** (the Banks / Law-Kelton model): a
+future-event list ordered by time, deterministic simultaneous-event
+rules, and zero-delay delta events. Time is an integer count of
+picoseconds. The `Simulator` never advances time past an event without
+processing it — a run that only touches the DRAM in cycle 0 and cycle
+4000 advances straight from 0 to 4000:
 
 ```python
 sim = Simulator()
@@ -227,6 +231,23 @@ cfg = Config(standard="DDR3", speed="DDR3_1600K", org="DDR3_2Gb_x8",
 `Config` also validates itself (`cfg.validate()`), and the bundled
 reference configurations are available via `config_dir()`.
 
+Configuration helpers:
+
+```python
+from pyramulator import (
+    estimate_capacity, theoretical_bandwidth,
+    supported_standards, supported_speeds, supported_orgs,
+)
+
+estimate_capacity("DDR4", "DDR4_4Gb_x8", channels=2)   # bytes
+cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
+theoretical_bandwidth(cfg)                                # GB/s
+
+supported_standards()   # ['DDR3', 'DDR4', 'LPDDR3', ...]
+supported_speeds("DDR4")   # speed grades valid for DDR4
+supported_orgs("DDR4")     # organization/density options
+```
+
 ## Benchmarks and address streams
 
 ```python
@@ -234,8 +255,12 @@ from pyramulator import benchmark_latency, benchmark_bandwidth, address_stream
 
 benchmark_latency(cfg, num_requests=256, mode="random", seed=42)
 benchmark_bandwidth(cfg, num_requests=256)
+benchmark_all(cfg, num_requests=256)  # both in one call
 
 addrs = address_stream("sequential", 256, cacheline=64)   # or "strided" / "random"
+
+# split a stream into reads and writes by probability
+reads, writes = split_read_write(addrs, write_fraction=0.25, seed=1)
 ```
 
 ## Supported DRAM Standards

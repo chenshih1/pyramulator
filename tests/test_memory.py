@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pyramulator import Config, RequestInfo, RequestType
+from pyramulator import Config, RequestType
 from pyramulator._engine import MemorySystem
 from tests.conftest import DDR4_2400R_CFG
 
@@ -70,11 +70,6 @@ class TestMemorySystem:
         mem = MemorySystem(ddr4_config)
         results = [mem.send_read(i * 64) for i in range(64)]
         assert all(results[:32])
-
-    def test_context_manager(self, ddr4_config) -> None:
-        with MemorySystem(ddr4_config) as mem:
-            mem.send_read(0x0)
-            mem.run(100)
 
     def test_send_reads_batch(self, ddr4_config) -> None:
         mem = MemorySystem(ddr4_config)
@@ -173,23 +168,23 @@ class TestBenchmark:
         cfg = Config(**DDR4_2400R_CFG)
 
         seq_lats = []
-        with MemorySystem(cfg) as mem:
-            for i in range(64):
-                while not mem.send_read(
-                    i * 64, callback=lambda info: seq_lats.append(info.latency)
-                ):
-                    mem.tick()
-            mem.run_until_idle()
+        mem = MemorySystem(cfg)
+        for i in range(64):
+            while not mem.send_read(
+                i * 64, callback=lambda info: seq_lats.append(info.latency)
+            ):
+                mem.tick()
+        mem.run_until_idle()
 
         rand_lats = []
         addrs = [rng.randrange(0, 1 << 24, 64) for _ in range(64)]
-        with MemorySystem(cfg) as mem:
-            for addr in addrs:
-                while not mem.send_read(
-                    addr, callback=lambda info: rand_lats.append(info.latency)
-                ):
-                    mem.tick()
-            mem.run_until_idle()
+        mem = MemorySystem(cfg)
+        for addr in addrs:
+            while not mem.send_read(
+                addr, callback=lambda info: rand_lats.append(info.latency)
+            ):
+                mem.tick()
+        mem.run_until_idle()
 
         seq_avg = sum(seq_lats) / len(seq_lats)
         rand_avg = sum(rand_lats) / len(rand_lats)
@@ -363,28 +358,6 @@ class TestRangeSend:
         assert seen == [0x40]
 
 
-class TestBlockingSend:
-    def test_blocking_read(self, ddr4_config) -> None:
-        mem = MemorySystem(ddr4_config)
-        results = []
-        waited = mem.send_read_blocking(0x1000, callback=lambda i: results.append(i))
-        assert waited >= 0
-        mem.run_until_idle()
-        assert len(results) == 1
-
-    def test_blocking_saturation(self, ddr4_config) -> None:
-        mem = MemorySystem(ddr4_config)
-        results = []
-        total_waited = 0
-        for i in range(64):
-            total_waited += mem.send_read_blocking(
-                i * 64, callback=lambda i: results.append(i)
-            )
-        mem.run_until_idle()
-        assert total_waited >= 0
-        assert len(results) == 64
-
-
 class TestCachelineValidation:
     def test_not_power_of_two(self, ddr4_config) -> None:
         with pytest.raises(ValueError, match="power of two"):
@@ -472,21 +445,3 @@ class TestDrive:
         stats = mem.get_stats()
         assert isinstance(stats, dict)
         assert stats["read_requests"] == 1.0
-
-    def test_completions_pull_model(self, ddr4_config) -> None:
-        mem = MemorySystem(ddr4_config, collect_events=True)
-        n_read = 8
-        mem.send_reads(range(0x1000, 0x1000 + 64 * n_read, 64))
-        mem.send_writes(range(0x2000, 0x2000 + 64 * 4, 64))
-        completions = list(mem.completions())
-        assert len(completions) == n_read + 4
-        assert all(isinstance(i, RequestInfo) for i in completions)
-        assert any(i.type == RequestType.READ for i in completions)
-        assert any(i.type == RequestType.WRITE for i in completions)
-        assert all(i.latency >= 0 for i in completions)
-
-    def test_completions_requires_collect_events(self, ddr4_config) -> None:
-        mem = MemorySystem(ddr4_config)
-        mem.send_read(0x1000)
-        with pytest.raises(RuntimeError):
-            list(mem.completions())
