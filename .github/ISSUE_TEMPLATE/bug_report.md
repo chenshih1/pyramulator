@@ -20,10 +20,12 @@ What did you expect to happen, and what actually happened?
 Minimal code to reproduce:
 
 ```python
-from pyramulator import Config, MemorySystem
+from pyramulator import Config, Dram, Simulator
 
-cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
-mem = MemorySystem(cfg)
+sim = Simulator()
+dram = Dram(sim, Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8"))
+dram.read(0x1000)
+sim.run_until_idle()
 ...
 ```
 

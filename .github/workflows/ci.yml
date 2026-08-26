@@ -67,12 +67,13 @@ jobs:
           # installed package
           cd /tmp
           /tmp/sdist-venv/bin/python -c "
-          from pyramulator import Config, MemorySystem
-          mem = MemorySystem(Config(standard='DDR4', speed='DDR4_2400R',
-                                     org='DDR4_4Gb_x8'))
-          mem.send_read(0x1000)
-          mem.run_until_idle()
-          assert mem.get_stats()['read_requests'] == 1
+          from pyramulator import Config, Dram, Simulator
+          sim = Simulator()
+          dram = Dram(sim, Config(standard='DDR4', speed='DDR4_2400R',
+                                  org='DDR4_4Gb_x8'))
+          dram.read(0x1000)
+          sim.run_until_idle()
+          assert dram.get_stats()['read_requests'] == 1
           print('sdist install OK')
           "
       - name: Size check

@@ -9,6 +9,7 @@ One or two sentences describing the change.
 ## Testing
 
 - [ ] `ruff check pyramulator/ test/ bench/ examples/` passes
+- [ ] `ruff format --check pyramulator/ test/ bench/ examples/` passes
 - [ ] `mypy pyramulator/` passes
 - [ ] `pytest` passes
 - [ ] If the build changed: `pip install -e ".[dev]"` from a clean checkout works
