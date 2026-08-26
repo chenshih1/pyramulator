@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from pyramulator import (
-    MemorySystem,
     addresses,
     avg_read_latency,
     benchmark_bandwidth,
@@ -13,6 +12,7 @@ from pyramulator import (
     read_write_mix,
     row_hit_rate,
 )
+from pyramulator._memory import MemorySystem
 
 
 class TestMetrics:

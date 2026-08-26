@@ -166,12 +166,12 @@ class TestTheoreticalBandwidth:
 
 class TestCapacity:
     def test_ddr4_4gb_x8(self, ddr4_config):
-        from pyramulator import MemorySystem
+        from pyramulator._memory import MemorySystem
 
         assert MemorySystem(ddr4_config).capacity == 4 * 2**30
 
     def test_ddr4_scales_with_channels(self):
-        from pyramulator import MemorySystem
+        from pyramulator._memory import MemorySystem
 
         cfg = Config(standard="DDR4", channels=2, speed="DDR4_2400R", org="DDR4_4Gb_x8")
         assert MemorySystem(cfg).capacity == 8 * 2**30
@@ -217,7 +217,7 @@ class TestMapping:
             cfg.validate()
 
     def test_ddr3_runs_with_mapping(self):
-        from pyramulator import MemorySystem
+        from pyramulator._memory import MemorySystem
 
         cfg = Config(
             standard="DDR3",

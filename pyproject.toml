@@ -4,14 +4,23 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pyramulator"
-version = "0.3.0"
-description = "Python bindings for Ramulator DRAM simulator"
+version = "0.4.0"
+description = "Discrete-event simulation for hardware architecture with a cycle-accurate DRAM model (Ramulator)"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "pyramulator contributors"}]
-keywords = ["dram", "simulator", "ramulator", "memory", "hardware"]
+keywords = [
+    "discrete-event",
+    "simulation",
+    "dram",
+    "memory",
+    "hardware",
+    "architecture",
+    "ramulator",
+    "cycle-accurate",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

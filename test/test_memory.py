@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from pyramulator import Config, MemorySystem, RequestInfo, RequestType
+from pyramulator import Config, RequestInfo, RequestType
+from pyramulator._memory import MemorySystem
 
 
 class TestMemorySystem:
@@ -295,28 +296,6 @@ class TestStats:
         assert m1.get_stats()["read_requests"] == 1
         assert m2.get_stats()["read_requests"] == 0
 
-    def test_module_level_requires_single_instance(self, ddr4_config):
-        import gc
-
-        from pyramulator import get_stats
-
-        mem = MemorySystem(ddr4_config)
-        try:
-            mem2 = MemorySystem(ddr4_config)
-            with pytest.raises(RuntimeError, match="exactly one live"):
-                get_stats()
-        finally:
-            del mem2
-        del mem
-        gc.collect()
-        mem3 = MemorySystem(ddr4_config)
-        try:
-            stats = get_stats()
-            assert "read_requests" in stats
-        finally:
-            del mem3
-            gc.collect()
-
 
 class TestRangeSend:
     def test_reads_range(self, ddr4_config):
@@ -485,12 +464,13 @@ class TestDrive:
         assert mem.run_until_idle() >= 0
         assert mem.flush() >= 0
 
-    def test_stats_property(self, ddr4_config):
+    def test_get_stats(self, ddr4_config):
         mem = MemorySystem(ddr4_config)
         mem.send_read(0x1000)
         mem.run_until_idle()
-        assert isinstance(mem.stats, dict)
-        assert mem.stats["read_requests"] == 1.0
+        stats = mem.get_stats()
+        assert isinstance(stats, dict)
+        assert stats["read_requests"] == 1.0
 
     def test_completions_pull_model(self, ddr4_config):
         mem = MemorySystem(ddr4_config, collect_events=True)

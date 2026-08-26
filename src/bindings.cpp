@@ -165,6 +165,25 @@ public:
 
     void tick() { mem_->tick(); }
 
+    // Completion callback for a request. Ramulator fires the callback for
+    // read completions only (writes never enter its pending list), so reads
+    // are recorded into the Python-facing queue here — no GIL, no Python
+    // calls from the simulation hot path; the Python side flushes them in
+    // bulk via drain_completed(). Writes get a no-op: the wrapper answers
+    // them upon acceptance.
+    std::function<void(Request &)> make_callback(Request::Type type,
+                                                 py::object callback,
+                                                 int coreid) {
+        if (type == Request::Type::READ && !callback.is_none()) {
+            return [this, callback, coreid](Request &r) {
+                completed_.push_back(
+                    {r.addr, static_cast<int>(r.type), r.arrive, r.depart,
+                     coreid, callback});
+            };
+        }
+        return [](Request &) {};
+    }
+
     bool send(long addr, Request::Type type, int coreid,
               py::object callback) {
         Request req;
@@ -172,24 +191,7 @@ public:
         req.type = type;
         req.coreid = coreid;
         req.is_first_command = true;
-
-        // Like gem5, write requests are considered complete upon acceptance:
-        // ramulator only invokes the callback for read completions (the write
-        // callback hook is not called upstream).
-        //
-        // Completions are recorded into a plain C++ queue (no GIL, no Python
-        // calls from the simulation hot path); the Python side flushes them
-        // in bulk via drain_completed(), holding the GIL once per batch.
-        if (type == Request::Type::READ && !callback.is_none()) {
-            req.callback = [this, callback, coreid](Request &r) {
-                completed_.push_back(
-                    {r.addr, static_cast<int>(r.type), r.arrive, r.depart,
-                     coreid, callback});
-            };
-        } else {
-            req.callback = [](Request &) {};
-        }
-
+        req.callback = make_callback(type, callback, coreid);
         return mem_->send(req);
     }
 
@@ -283,17 +285,6 @@ public:
     // across many requests.
     py::list send_batch(const py::list &addrs, Request::Type type, int coreid,
                         py::object callback) {
-        std::function<void(Request &)> read_cb;
-        if (type == Request::Type::READ && !callback.is_none()) {
-            read_cb = [this, callback, coreid](Request &r) {
-                completed_.push_back(
-                    {r.addr, static_cast<int>(r.type), r.arrive, r.depart,
-                     coreid, callback});
-            };
-        } else {
-            read_cb = [](Request &) {};
-        }
-
         py::list accepted;
         for (auto item : addrs) {
             Request req;
@@ -301,7 +292,7 @@ public:
             req.type = type;
             req.coreid = coreid;
             req.is_first_command = true;
-            req.callback = read_cb;
+            req.callback = make_callback(type, callback, coreid);
             accepted.append(mem_->send(req));
         }
         return accepted;
@@ -311,17 +302,6 @@ public:
     // materializing the address list in Python.
     py::list send_range(long start, long count, long stride,
                         Request::Type type, int coreid, py::object callback) {
-        std::function<void(Request &)> read_cb;
-        if (type == Request::Type::READ && !callback.is_none()) {
-            read_cb = [this, callback, coreid](Request &r) {
-                completed_.push_back(
-                    {r.addr, static_cast<int>(r.type), r.arrive, r.depart,
-                     coreid, callback});
-            };
-        } else {
-            read_cb = [](Request &) {};
-        }
-
         py::list accepted;
         long addr = start;
         for (long i = 0; i < count; ++i, addr += stride) {
@@ -330,7 +310,7 @@ public:
             req.type = type;
             req.coreid = coreid;
             req.is_first_command = true;
-            req.callback = read_cb;
+            req.callback = make_callback(type, callback, coreid);
             accepted.append(mem_->send(req));
         }
         return accepted;

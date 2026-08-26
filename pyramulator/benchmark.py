@@ -1,21 +1,25 @@
-"""One-call DRAM benchmarks (latency / throughput) for any configuration."""
+"""One-call DRAM benchmarks (latency / throughput) for any configuration.
+
+Both benchmarks run on the DES framework: a :class:`Simulator` drives a
+:class:`Dram` component; requests are issued with backpressure and
+completions are delivered as events.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .dram import Dram
+from .sim import Simulator
 from .workload import addresses
 
 if TYPE_CHECKING:
-    from . import Config, MemorySystem
+    from ._memory import Config
 
 
-def _mem(config: Config | dict[str, Any], cacheline: int) -> MemorySystem:
-    # Late import: pyramulator/__init__.py imports this module while it is
-    # still initializing.
-    from . import MemorySystem
-
-    return MemorySystem(config, cacheline=cacheline)
+def _dram(config: Config | dict[str, Any], cacheline: int) -> tuple[Simulator, Dram]:
+    sim = Simulator()
+    return sim, Dram(sim, config, cacheline=cacheline)
 
 
 def benchmark_latency(
@@ -28,23 +32,26 @@ def benchmark_latency(
 ) -> dict[str, float | int]:
     """Average read latency in DRAM clock cycles for an address pattern.
 
-    Requests are sent blockingly (ticking until accepted), then the system
-    is drained. Returns a dict with avg/min/max latency and tck."""
-    mem = _mem(config, cacheline)
-    latencies = []
+    Requests are issued one at a time with backpressure (the simulator is
+    stepped until each is accepted), then the DRAM is drained. Returns a
+    dict with avg/min/max latency and tck."""
+    sim, dram = _dram(config, cacheline)
+    latencies: list[int] = []
+
+    def on_complete(info):
+        latencies.append(info.latency)
+
     for addr in addresses(mode, num_requests, cacheline, seed=seed, max_addr=max_addr):
-        while not mem.send_read(
-            addr, callback=lambda info: latencies.append(info.depart - info.arrive)
-        ):
-            mem.tick()
-    mem.run_until_idle()
+        while not dram.read(addr, callback=on_complete):
+            sim.step()
+    sim.run_until_idle()
     if not latencies:
-        return {"avg": 0.0, "min": 0, "max": 0, "tck": mem.tck, "completed": 0}
+        return {"avg": 0.0, "min": 0, "max": 0, "tck": dram.tck_ns, "completed": 0}
     return {
         "avg": sum(latencies) / len(latencies),
         "min": min(latencies),
         "max": max(latencies),
-        "tck": mem.tck,
+        "tck": dram.tck_ns,
         "completed": len(latencies),
     }
 
@@ -54,10 +61,10 @@ def benchmark_bandwidth(
     num_requests: int = 256,
     cacheline: int = 64,
     queue_depth: int = 32,
-    max_cycles: int = 200_000,
+    max_events: int = 1_000_000,
 ) -> dict[str, float | int]:
     """Sustained read bandwidth in GB/s with a saturated queue."""
-    mem = _mem(config, cacheline)
+    sim, dram = _dram(config, cacheline)
     completed = [0]
     first_clk = [None]
     last_clk = [0]
@@ -70,21 +77,21 @@ def benchmark_bandwidth(
 
     issued = 0
     addr = 0
-    while completed[0] < num_requests and mem.clk < max_cycles:
+    while completed[0] < num_requests and sim.processed < max_events:
         while issued - completed[0] < queue_depth and issued < num_requests:
-            if mem.send_read(addr, callback=on_done):
+            if dram.read(addr, callback=on_done):
                 issued += 1
                 addr += cacheline
             else:
                 break
-        mem.tick()
+        sim.step()
 
     if first_clk[0] is None or completed[0] < 2:
         return {
             "bandwidth_gbs": 0.0,
             "completed": completed[0],
             "cycles": 0,
-            "tck": mem.tck,
+            "tck": dram.tck_ns,
         }
 
     active_cycles = last_clk[0] - first_clk[0]
@@ -93,16 +100,16 @@ def benchmark_bandwidth(
             "bandwidth_gbs": 0.0,
             "completed": completed[0],
             "cycles": 0,
-            "tck": mem.tck,
+            "tck": dram.tck_ns,
         }
 
-    seconds = active_cycles * mem.tck * 1e-9
+    seconds = active_cycles * dram.tck_ns * 1e-9
     bandwidth = completed[0] * cacheline / seconds / 1e9
     return {
         "bandwidth_gbs": bandwidth,
         "completed": completed[0],
         "cycles": active_cycles,
-        "tck": mem.tck,
+        "tck": dram.tck_ns,
     }
 
 
