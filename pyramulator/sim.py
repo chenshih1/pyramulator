@@ -56,6 +56,7 @@ class Simulator:
 
     def __init__(self) -> None:
         self._heap: list[_Event] = []
+        self._by_id: dict[int, _Event] = {}
         self._seq = 0
         self._now = 0
         self._processed = 0
@@ -134,22 +135,24 @@ class Simulator:
         heapq.heappush(self._heap, event)
         self._live += 1
         self._sources[source] += 1
+        self._by_id[event.seq] = event
         return event.seq
 
     def cancel(self, event_id: int) -> bool:
         """Cancel a pending event; returns True if it was still scheduled."""
-        for event in self._heap:
-            if event.seq == event_id and not event.cancelled:
-                event.cancelled = True
-                self._live -= 1
-                return True
+        event = self._by_id.get(event_id)
+        if event is not None and not event.cancelled:
+            event.cancelled = True
+            self._live -= 1
+            return True
         return False
 
     # -- execution -----------------------------------------------------------
 
     def _peek(self) -> _Event | None:
         while self._heap and self._heap[0].cancelled:
-            heapq.heappop(self._heap)
+            dead = heapq.heappop(self._heap)
+            self._by_id.pop(dead.seq, None)
         return self._heap[0] if self._heap else None
 
     def step(self) -> bool:
@@ -162,6 +165,7 @@ class Simulator:
         self._now = event.time
         event.callback()
         self._processed += 1
+        self._by_id.pop(event.seq, None)
         return True
 
     def run(self, until: int | None = None, max_events: int | None = None) -> int:

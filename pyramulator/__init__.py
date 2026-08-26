@@ -10,7 +10,8 @@ cycles.
 
 from __future__ import annotations
 
-from pyramulator._memory import Config, RequestInfo, RequestType
+from pyramulator._engine import Config, RequestInfo, RequestType
+from pyramulator._version import __version__
 from pyramulator.benchmark import (
     benchmark_all,
     benchmark_bandwidth,
@@ -33,7 +34,7 @@ from pyramulator.metrics import (
     summarize_metrics,
 )
 from pyramulator.sim import Simulator
-from pyramulator.workload import addresses, read_write_mix
+from pyramulator.workload import address_stream, split_read_write
 
 __all__ = [
     "FIFO",
@@ -45,7 +46,8 @@ __all__ = [
     "RequestInfo",
     "RequestType",
     "Simulator",
-    "addresses",
+    "__version__",
+    "address_stream",
     "avg_read_latency",
     "benchmark_all",
     "benchmark_bandwidth",
@@ -53,12 +55,11 @@ __all__ = [
     "config_dir",
     "estimate_capacity",
     "measured_bandwidth",
-    "read_write_mix",
     "row_hit_rate",
+    "split_read_write",
     "summarize_metrics",
     "supported_orgs",
     "supported_speeds",
     "supported_standards",
     "theoretical_bandwidth",
 ]
-__version__ = "0.4.0"

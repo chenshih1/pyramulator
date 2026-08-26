@@ -169,6 +169,8 @@ class Pipe(Component):
         self._slots = slots
         self._consumer = consumer
         self._in_flight = 0
+        self._stalled: deque[Any] = deque()
+        self._retry_eid: int | None = None
 
     @property
     def latency_cycles(self) -> int:
@@ -201,8 +203,21 @@ class Pipe(Component):
 
     def _deliver(self, item: Any) -> None:
         if self._consumer(item) is False:
-            # Downstream is stalled: the item stays in the last stage and
-            # delivery is retried every cycle until accepted.
-            self.schedule_cycles(1, lambda: self._deliver(item))
+            # Downstream is stalled: queue the item and schedule a shared
+            # retry event if one is not already pending.
+            self._stalled.append(item)
+            if self._retry_eid is None:
+                self._retry_eid = self.schedule_cycles(1, self._retry)
             return
         self._in_flight -= 1
+
+    def _retry(self) -> None:
+        """Attempt to drain stalled items; reschedule on backpressure."""
+        self._retry_eid = None
+        while self._stalled:
+            item = self._stalled[0]
+            if self._consumer(item) is False:
+                self._retry_eid = self.schedule_cycles(1, self._retry)
+                return
+            self._stalled.popleft()
+            self._in_flight -= 1

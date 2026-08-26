@@ -6,7 +6,7 @@ import random as _random
 from collections.abc import Sequence
 
 
-def addresses(
+def address_stream(
     mode: str = "sequential",
     count: int = 256,
     cacheline: int = 64,
@@ -25,19 +25,22 @@ def addresses(
 
     Returns a list of ints, ready for ``send_reads`` / ``send_writes``.
     """
-    if mode == "sequential":
-        return [start + i * cacheline for i in range(count)]
-    if mode == "strided":
-        return [start + i * stride for i in range(count)]
-    if mode == "random":
-        rng = _random.Random(seed)
-        return [rng.randrange(0, max_addr, cacheline) for _ in range(count)]
-    raise ValueError(
-        f"unknown address mode: {mode!r} (choose from sequential, strided, random)"
-    )
+    match mode:
+        case "sequential":
+            return [start + i * cacheline for i in range(count)]
+        case "strided":
+            return [start + i * stride for i in range(count)]
+        case "random":
+            rng = _random.Random(seed)
+            return [rng.randrange(0, max_addr, cacheline) for _ in range(count)]
+        case _:
+            raise ValueError(
+                f"unknown address mode: {mode!r} "
+                "(choose from sequential, strided, random)"
+            )
 
 
-def read_write_mix(
+def split_read_write(
     addrs: Sequence[int], write_fraction: float = 0.0, seed: int | None = None
 ) -> tuple[list[int], list[int]]:
     """Split an address stream into (read_addrs, write_addrs).

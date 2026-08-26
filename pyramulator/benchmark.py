@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from .dram import Dram
 from .sim import Simulator
-from .workload import addresses
+from .workload import address_stream
 
 if TYPE_CHECKING:
-    from ._memory import Config
+    from ._engine import Config
 
 
 def _dram(config: Config | dict[str, Any], cacheline: int) -> tuple[Simulator, Dram]:
@@ -41,7 +41,9 @@ def benchmark_latency(
     def on_complete(info):
         latencies.append(info.latency)
 
-    for addr in addresses(mode, num_requests, cacheline, seed=seed, max_addr=max_addr):
+    for addr in address_stream(
+        mode, num_requests, cacheline, seed=seed, max_addr=max_addr
+    ):
         while not dram.read(addr, callback=on_complete):
             sim.step()
     sim.run_until_idle()
@@ -72,8 +74,8 @@ def benchmark_bandwidth(
     def on_done(info):
         completed[0] += 1
         if first_clk[0] is None:
-            first_clk[0] = info.depart
-        last_clk[0] = info.depart
+            first_clk[0] = info.depart_cycle
+        last_clk[0] = info.depart_cycle
 
     issued = 0
     addr = 0

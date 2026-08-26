@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <functional>
+#include <vector>
 
 #include "Config.h"
 #include "Request.h"
@@ -122,12 +123,23 @@ static py::dict stats_slice(size_t begin, size_t end) {
 
 }  // namespace
 
-// Mirrors the standard-name table inside ramulator's Gem5Wrapper so we can
-// raise a friendly error instead of tripping its assert in release builds.
-static const std::set<std::string> supported_standards = {
-    "DDR3", "DDR4", "LPDDR3", "LPDDR4",
-    "GDDR5", "WideIO", "WideIO2", "HBM",
-    "SALP-1", "SALP-2", "SALP-MASA",
+// Standard-name → MemoryFactory mapping.  Kept as a single table so that
+// the constructor validation and the factory both use the same source of
+// truth — no duplicated list of names to keep in sync.
+static const std::map<std::string,
+                      std::function<MemoryBase *(const Config &, int)>>
+    name_to_func = {
+        {"DDR3", &MemoryFactory<DDR3>::create},
+        {"DDR4", &MemoryFactory<DDR4>::create},
+        {"LPDDR3", &MemoryFactory<LPDDR3>::create},
+        {"LPDDR4", &MemoryFactory<LPDDR4>::create},
+        {"GDDR5", &MemoryFactory<GDDR5>::create},
+        {"WideIO", &MemoryFactory<WideIO>::create},
+        {"WideIO2", &MemoryFactory<WideIO2>::create},
+        {"HBM", &MemoryFactory<HBM>::create},
+        {"SALP-1", &MemoryFactory<SALP>::create},
+        {"SALP-2", &MemoryFactory<SALP>::create},
+        {"SALP-MASA", &MemoryFactory<SALP>::create},
 };
 
 // Thin Python-facing wrapper around ramulator's public API (MemoryFactory +
@@ -139,7 +151,7 @@ public:
         if (config.get_core_num() == 0)
             config.set_core_num(num_cores);
         const std::string &std_name = config["standard"];
-        if (supported_standards.find(std_name) == supported_standards.end())
+        if (name_to_func.find(std_name) == name_to_func.end())
             throw std::invalid_argument("unsupported standard: " + std_name);
         const size_t stats_begin = Stats::all_stats.size();
         mem_ = create_memory(config, cacheline, std_name);
@@ -250,10 +262,14 @@ public:
     py::tuple drive(const py::list &addrs, int queue_depth, long batch,
                     long max_cycles, py::object callback) {
         const long total = static_cast<long>(addrs.size());
+        std::vector<long> vec;
+        vec.reserve(static_cast<size_t>(total));
+        for (auto item : addrs)
+            vec.push_back(item.cast<long>());
         return drive_loop(
             [&](long i, std::function<void(Request &)> &cb) {
                 Request req;
-                req.addr = addrs[static_cast<size_t>(i)].cast<long>();
+                req.addr = vec[static_cast<size_t>(i)];
                 req.type = Request::Type::READ;
                 req.coreid = 0;
                 req.is_first_command = true;
@@ -285,6 +301,7 @@ public:
     // across many requests.
     py::list send_batch(const py::list &addrs, Request::Type type, int coreid,
                         py::object callback) {
+        auto cb = make_callback(type, callback, coreid);
         py::list accepted;
         for (auto item : addrs) {
             Request req;
@@ -292,7 +309,7 @@ public:
             req.type = type;
             req.coreid = coreid;
             req.is_first_command = true;
-            req.callback = make_callback(type, callback, coreid);
+            req.callback = cb;
             accepted.append(mem_->send(req));
         }
         return accepted;
@@ -302,6 +319,7 @@ public:
     // materializing the address list in Python.
     py::list send_range(long start, long count, long stride,
                         Request::Type type, int coreid, py::object callback) {
+        auto cb = make_callback(type, callback, coreid);
         py::list accepted;
         long addr = start;
         for (long i = 0; i < count; ++i, addr += stride) {
@@ -310,18 +328,20 @@ public:
             req.type = type;
             req.coreid = coreid;
             req.is_first_command = true;
-            req.callback = make_callback(type, callback, coreid);
+            req.callback = cb;
             accepted.append(mem_->send(req));
         }
         return accepted;
     }
 
     py::list drain_completed() {
-        py::list out;
+        const size_t n = completed_.size();
+        py::list out(n);
+        size_t idx = 0;
         while (!completed_.empty()) {
             CompletionEvent &e = completed_.front();
-            out.append(py::make_tuple(e.addr, e.type, e.arrive, e.depart,
-                                      e.core_id, e.callback));
+            out[idx++] = py::make_tuple(e.addr, e.type, e.arrive, e.depart,
+                                        e.core_id, e.callback);
             completed_.pop_front();
         }
         return out;
@@ -376,21 +396,6 @@ private:
 
     static MemoryBase *create_memory(const Config &config, int cacheline,
                                      const std::string &std_name) {
-        static const std::map<std::string,
-                              std::function<MemoryBase *(const Config &, int)>>
-            name_to_func = {
-                {"DDR3", &MemoryFactory<DDR3>::create},
-                {"DDR4", &MemoryFactory<DDR4>::create},
-                {"LPDDR3", &MemoryFactory<LPDDR3>::create},
-                {"LPDDR4", &MemoryFactory<LPDDR4>::create},
-                {"GDDR5", &MemoryFactory<GDDR5>::create},
-                {"WideIO", &MemoryFactory<WideIO>::create},
-                {"WideIO2", &MemoryFactory<WideIO2>::create},
-                {"HBM", &MemoryFactory<HBM>::create},
-                {"SALP-1", &MemoryFactory<SALP>::create},
-                {"SALP-2", &MemoryFactory<SALP>::create},
-                {"SALP-MASA", &MemoryFactory<SALP>::create},
-        };
         return name_to_func.at(std_name)(config, cacheline);
     }
 

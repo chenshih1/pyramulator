@@ -16,40 +16,53 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+### Profile-Guided Optimization (PGO)
+
+For release builds targeting the local machine, a PGO pass can improve
+C++ engine throughput by 5–15 %:
+
+```bash
+python scripts/build_pgo.py
+```
+
+This compiles an instrumented wheel, runs `benchmarks/bench.py` to collect
+execution profiles, and recompiles with `-fprofile-use`.  The script
+requires GCC or Clang and is exercised in Linux CI only.
+
 ## Checks
 
 All checks must pass before merging:
 
 ```bash
-ruff check pyramulator/ test/ bench/ examples/          # lint
-ruff format --check pyramulator/ test/ bench/ examples/ # formatting
+ruff check pyramulator/ tests/ benchmarks/ examples/          # lint
+ruff format --check pyramulator/ tests/ benchmarks/ examples/ # formatting
 mypy pyramulator/                                       # type check
 pytest                                                  # tests (+ coverage)
-python bench/bench.py                                   # sanity benchmark
+python benchmarks/bench.py                                   # sanity benchmark
 ```
 
-CI runs these on Python 3.8–3.13 with the submodule initialized.
+CI runs these on Python 3.10–3.13 with the submodule initialized.
 
 ## Testing
 
-Tests live in `test/` and are organized by topic:
+Tests live in `tests/` and are organized by topic:
 
 - `test_config.py` — configuration, capacity, theoretical bandwidth
-- `test_memory.py` — internal engine (Ramulator wrapper, statistics, batch APIs)
+- `test_memory.py` — internal engine (`_engine.py`, statistics, batch APIs)
 - `test_des.py` — DES kernel, hardware primitives, Dram component
 - `test_helpers.py` — metrics, workload generators, benchmarks
 - `test_metadata.py` — package metadata consistency
 
-Shared fixtures are defined in `test/conftest.py`. When adding functionality,
+Shared fixtures are defined in `tests/conftest.py`. When adding functionality,
 add tests for it and keep the suite green with coverage.
 
 ## Project layout
 
-- `src/bindings.cpp` — pybind11 bindings; the only C++ in this project.
+- `cpp/bindings.cpp` — pybind11 bindings; the only C++ in this project.
   It uses only Ramulator's public API (`MemoryFactory` + `MemoryBase`) —
   do not patch or modify `third_party/ramulator`.
 - `pyramulator/` — the DES framework: `sim.py` (kernel), `hardware.py`
-  (primitives), `dram.py` (DRAM component), `_memory.py` (internal engine)
+  (primitives), `dram.py` (DRAM component), `_engine.py` (internal engine)
 - `third_party/ramulator` — Ramulator submodule (pinned commit)
 
 ## Commits

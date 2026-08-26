@@ -4,6 +4,62 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-27
+
+### Changed (breaking)
+
+- **API renames for clarity** (breaking):
+  - `RequestInfo.arrive` / `RequestInfo.depart` → `arrive_cycle` /
+    `depart_cycle` — the fields are DRAM clock-cycle counts, not wall-
+    clock timestamps; the new names state the unit explicitly.
+  - `addresses()` → `address_stream()` — the generator name now carries
+    the "generate a stream" action.
+  - `read_write_mix()` → `split_read_write()` — the function splits a
+    stream into reads and writes; the old name implied mixing.
+- **Python floor raised to 3.10** (breaking): 3.8/3.9 reached end-of-
+  life; numpy 2.x / pytest 8+ require 3.10+. Code now uses 3.10+
+  features (`match`/`case`, `int.bit_count()`, `TypeAlias`).
+- **CMake floor raised to 3.20** (breaking): modern `FindPython` and
+  preset support; capped below 4.0 to avoid future incompatible major.
+- `config_dir()` simplified: the Python 3.8 `importlib.resources`
+  fallback was removed (3.10's `files()` is stable).
+
+### Added
+
+- `_core.pyi` hand-written type stubs for the C++ extension (mypy can
+  now type-check the engine boundary).
+- `docs/` Sphinx skeleton (`conf.py`, `index.rst`, quickstart, API pages).
+- GitHub Issue templates (bug report, feature request).
+- Single-source versioning via `pyramulator/_version.py`; `pyproject.toml`
+  reads it dynamically.
+
+### Changed
+
+- Engine module renamed `_memory.py` → `_engine.py` (internal).
+- Data tables split out of `configs.py` into `configs_data.py` (internal).
+- `tests/` and `benchmarks/` directory names aligned with community
+  convention (were `test/`, `bench/`); `src/` → `cpp/` for the native
+  binding.
+- Completion callback type extracted as `CompletionCallback` `TypeAlias`
+  (used across `_engine.py` and `dram.py`).
+- `Pipe` stall retry batches stalled items into one shared retry event
+  instead of one event per item per cycle.
+- `Dram` idle refresh batch size now backs off exponentially while idle.
+- `Simulator.cancel()` is O(1) via an id → event map; `_by_id` is
+  cleaned on `step()` to bound memory.
+- C++ binding: `send_batch`/`send_range` reuse one completion callback;
+  `drain_completed` preallocates the output list; `drive` converts the
+  address list to `std::vector` once.
+- Release builds add `-march=native`; PGO support via
+  `scripts/build_pgo.py` (instrument → train → optimize).
+
+### Fixed
+
+- mypy error on lambda type inference in `Dram._deliver_completed`
+  (extracted `_make_completion_cb`).
+- `config_dir()` coverage gap; several hardware-primitive edge cases
+  now tested (coverage 96%).
+
 ## [0.4.0] - 2026-08-26
 
 ### Added
@@ -44,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public API is DES-first: `Simulator`, `Clock`, `Component`, `FIFO`,
   `Pipe`, `Dram`, `Config`, `RequestInfo`, `RequestType`, workload and
   benchmark helpers. The cycle-stepped `MemorySystem` wrapper moved to
-  `pyramulator._memory` as the internal engine behind `Dram`.
+  `pyramulator._engine` as the internal engine behind `Dram`.
 - Benchmarks (`benchmark_latency`, `benchmark_bandwidth`,
   `benchmark_all`) now drive the DES framework; return shapes unchanged.
 - Examples rewritten as DES components (`examples/spmm_hbm.py`,
@@ -70,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deduplicated the C++ completion-callback construction across
   `send`/`send_batch`/`send_range` into one `make_callback` helper.
 - Collapsed the four near-identical benchmark table loops in
-  `bench/bench.py` into shared table helpers.
+  `benchmarks/bench.py` into shared table helpers.
 
 ## [0.1.0] - 2026-08-14
 
@@ -98,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration helpers: kwargs-based `Config`, `Config.from_file` with
   overrides (Python-side .cfg parsing), `validate()`, `estimate_capacity`,
   `theoretical_bandwidth`, per-standard minimum cacheline validation.
-- Workload helpers: `addresses()` (sequential / strided / random), and
+- Workload helpers: `address_stream()` (sequential / strided / random), and
   one-call benchmarks (`benchmark_latency`, `benchmark_bandwidth`,
   `benchmark_all`).
 - Bundled Ramulator reference configs (`pyramulator.data.configs` /
@@ -116,5 +172,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sustained request throughput ~150K req/s with per-request callbacks;
   DRAM simulation ~3.6M cycles/s single channel.
 
-[0.4.0]: https://gitee.com/chenshih1/pyramulator/releases/tag/v0.4.0
-[0.1.0]: https://gitee.com/chenshih1/pyramulator/releases/tag/v0.1.0
+[0.5.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.0
+[0.4.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.4.0
+[0.1.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.1.0

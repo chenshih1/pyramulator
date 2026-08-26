@@ -3,7 +3,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/chenshih1/pyramulator/ci.yml?branch=master&label=CI)](https://github.com/chenshih1/pyramulator/actions)
 [![Release](https://img.shields.io/github/v/release/chenshih1/pyramulator?label=release&logo=github)](https://github.com/chenshih1/pyramulator/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 
 A discrete-event simulation (DES) framework for hardware architecture,
 with a cycle-accurate DRAM timing model — Ramulator — embedded as the
@@ -41,7 +41,7 @@ while requests are in flight, so an idle memory costs zero events.
 
 ## Install
 
-Build from source (requires Python >= 3.8 and a C++17 compiler; pybind11
+Build from source (requires Python >= 3.10 and a C++17 compiler; pybind11
 and CMake are resolved automatically):
 
 ```bash
@@ -69,7 +69,7 @@ completed = []
 dram.read(0x1000, callback=lambda info: completed.append(info))
 sim.run_until_idle()          # completions arrive as events
 
-print(completed[0])           # RequestInfo(addr=4096, type=READ, arrive=.., depart=.., core_id=0)
+print(completed[0])           # RequestInfo(addr=4096, type=READ, arrive_cycle=.., depart_cycle=.., core_id=0)
 print(completed[0].latency)   # latency in DRAM clock cycles
 ```
 
@@ -230,12 +230,12 @@ reference configurations are available via `config_dir()`.
 ## Benchmarks and address streams
 
 ```python
-from pyramulator import benchmark_latency, benchmark_bandwidth, addresses
+from pyramulator import benchmark_latency, benchmark_bandwidth, address_stream
 
 benchmark_latency(cfg, num_requests=256, mode="random", seed=42)
 benchmark_bandwidth(cfg, num_requests=256)
 
-addrs = addresses("sequential", 256, cacheline=64)   # or "strided" / "random"
+addrs = address_stream("sequential", 256, cacheline=64)   # or "strided" / "random"
 ```
 
 ## Supported DRAM Standards
@@ -249,7 +249,7 @@ The DRAM model itself is simulated at C++ speed (~3.6M DRAM cycles/s on a
 single channel DDR4). Sustained request throughput with per-request Python
 callbacks is ~150K req/s; callbacks are delivered in batches (no per-event
 GIL round-trip). Measured latency and bandwidth across standards are
-reported by `bench/bench.py`.
+reported by `benchmarks/bench.py`.
 
 ## Examples
 
@@ -272,9 +272,9 @@ source .venv/bin/activate
 pip install -e ".[dev]"      # includes test, ruff, mypy, pytest-cov
 
 pytest                       # 144 tests
-ruff check pyramulator/ test/ bench/ examples/
+ruff check pyramulator/ tests/ benchmarks/ examples/
 mypy pyramulator/
-python bench/bench.py
+python benchmarks/bench.py
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
@@ -285,20 +285,20 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## Project Layout
 
-- `src/bindings.cpp` — pybind11 bindings (the only C++ in this project)
+- `cpp/bindings.cpp` — pybind11 bindings (the only C++ in this project)
 - `pyramulator/` — the DES framework
   - `__init__.py` — public API exports
   - `sim.py` — `Simulator` kernel (event queue, next-event time advance)
   - `hardware.py` — `Clock`, `Component`, `FIFO`, `Pipe`
   - `dram.py` — `Dram` component (Ramulator behind events)
-  - `_memory.py` — internal cycle-stepped engine (Ramulator wrapper)
+  - `_engine.py` — internal cycle-stepped engine (Ramulator wrapper)
   - `configs.py` — standards/speed/org tables, capacity & bandwidth estimation
   - `metrics.py` — derived performance metrics
   - `workload.py` — address-stream generators
   - `benchmark.py` — one-call latency/bandwidth benchmarks
 - `examples/` — runnable architecture examples (SpMM, vector accelerator)
-- `bench/` — cross-standard latency/bandwidth benchmark script
-- `test/` — pytest suite (engine, DES kernel, components)
+- `benchmarks/` — cross-standard latency/bandwidth benchmark script
+- `tests/` — pytest suite (engine, DES kernel, components)
 - `third_party/ramulator` — Ramulator as a git submodule (pinned commit), used unmodified
 - Ramulator is not vendored; see `git submodule status` and <https://github.com/CMU-SAFARI/ramulator>
 

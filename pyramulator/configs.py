@@ -1,172 +1,23 @@
-"""Supported DRAM standards, speed grades, and organizations."""
+"""DRAM configuration helpers, capacity estimation, and bandwidth estimation.
+
+Data tables (standards, speed grades, organizations) live in
+:mod:`pyramulator.configs_data` so that this module can focus on logic.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from importlib.resources import files as _pkg_files
 from pathlib import Path
 
-SUPPORTED_STANDARDS: list[str] = [
-    "DDR3",
-    "DDR4",
-    "LPDDR3",
-    "LPDDR4",
-    "GDDR5",
-    "WideIO",
-    "WideIO2",
-    "HBM",
-    "SALP-1",
-    "SALP-2",
-    "SALP-MASA",
-]
-
-SPEED_GRADES: dict[str, list[str]] = {
-    "DDR3": [
-        "DDR3_800D",
-        "DDR3_800E",
-        "DDR3_1066E",
-        "DDR3_1066F",
-        "DDR3_1066G",
-        "DDR3_1333G",
-        "DDR3_1333H",
-        "DDR3_1600H",
-        "DDR3_1600J",
-        "DDR3_1600K",
-        "DDR3_1866K",
-        "DDR3_1866L",
-        "DDR3_2133L",
-        "DDR3_2133M",
-    ],
-    "DDR4": [
-        "DDR4_1600K",
-        "DDR4_1600L",
-        "DDR4_1866M",
-        "DDR4_1866N",
-        "DDR4_2133P",
-        "DDR4_2133R",
-        "DDR4_2400R",
-        "DDR4_2400U",
-        "DDR4_3200",
-        "DDR4_3200AA",
-    ],
-    "LPDDR3": ["LPDDR3_1333", "LPDDR3_1600", "LPDDR3_1866", "LPDDR3_2133"],
-    "LPDDR4": ["LPDDR4_1600", "LPDDR4_2400", "LPDDR4_3200"],
-    "GDDR5": [
-        "GDDR5_4000",
-        "GDDR5_4500",
-        "GDDR5_5000",
-        "GDDR5_5500",
-        "GDDR5_6000",
-        "GDDR5_6500",
-        "GDDR5_7000",
-    ],
-    "WideIO": ["WideIO_200", "WideIO_266"],
-    "WideIO2": ["WideIO2_800", "WideIO2_1066"],
-    "HBM": ["HBM_1Gbps"],
-    "SALP": [
-        "SALP_800D",
-        "SALP_800E",
-        "SALP_1066E",
-        "SALP_1066F",
-        "SALP_1066G",
-        "SALP_1333G",
-        "SALP_1333H",
-        "SALP_1600H",
-        "SALP_1600J",
-        "SALP_1600K",
-        "SALP_1866K",
-        "SALP_1866L",
-        "SALP_2133L",
-        "SALP_2133M",
-    ],
-}
-
-ORGANIZATIONS: dict[str, list[str]] = {
-    "DDR3": [
-        "DDR3_512Mb_x4",
-        "DDR3_512Mb_x8",
-        "DDR3_512Mb_x16",
-        "DDR3_1Gb_x4",
-        "DDR3_1Gb_x8",
-        "DDR3_1Gb_x16",
-        "DDR3_2Gb_x4",
-        "DDR3_2Gb_x8",
-        "DDR3_2Gb_x16",
-        "DDR3_4Gb_x4",
-        "DDR3_4Gb_x8",
-        "DDR3_4Gb_x16",
-        "DDR3_8Gb_x4",
-        "DDR3_8Gb_x8",
-        "DDR3_8Gb_x16",
-    ],
-    "DDR4": [
-        "DDR4_2Gb_x4",
-        "DDR4_2Gb_x8",
-        "DDR4_2Gb_x16",
-        "DDR4_4Gb_x4",
-        "DDR4_4Gb_x8",
-        "DDR4_4Gb_x16",
-        "DDR4_8Gb_x4",
-        "DDR4_8Gb_x8",
-        "DDR4_8Gb_x16",
-    ],
-    "LPDDR3": [
-        "LPDDR3_4Gb_x16",
-        "LPDDR3_4Gb_x32",
-        "LPDDR3_6Gb_x16",
-        "LPDDR3_6Gb_x32",
-        "LPDDR3_8Gb_x16",
-        "LPDDR3_8Gb_x32",
-        "LPDDR3_12Gb_x16",
-        "LPDDR3_12Gb_x32",
-        "LPDDR3_16Gb_x16",
-        "LPDDR3_16Gb_x32",
-    ],
-    "LPDDR4": ["LPDDR4_4Gb_x16", "LPDDR4_6Gb_x16", "LPDDR4_8Gb_x16"],
-    "GDDR5": [
-        "GDDR5_512Mb_x16",
-        "GDDR5_512Mb_x32",
-        "GDDR5_1Gb_x16",
-        "GDDR5_1Gb_x32",
-        "GDDR5_2Gb_x16",
-        "GDDR5_2Gb_x32",
-        "GDDR5_4Gb_x16",
-        "GDDR5_4Gb_x32",
-        "GDDR5_8Gb_x16",
-        "GDDR5_8Gb_x32",
-    ],
-    "WideIO": ["WideIO_1Gb", "WideIO_2Gb", "WideIO_4Gb", "WideIO_8Gb"],
-    "WideIO2": ["WideIO2_8Gb"],
-    "HBM": ["HBM_1Gb", "HBM_2Gb", "HBM_4Gb"],
-    "SALP": [
-        "SALP_512Mb_x4",
-        "SALP_512Mb_x8",
-        "SALP_512Mb_x16",
-        "SALP_1Gb_x4",
-        "SALP_1Gb_x8",
-        "SALP_1Gb_x16",
-        "SALP_2Gb_x4",
-        "SALP_2Gb_x8",
-        "SALP_2Gb_x16",
-        "SALP_4Gb_x4",
-        "SALP_4Gb_x8",
-        "SALP_4Gb_x16",
-        "SALP_8Gb_x4",
-        "SALP_8Gb_x8",
-        "SALP_8Gb_x16",
-    ],
-}
-
-
-# Address mapping schemes (channel/bank/row interleaving). Ramulator only
-# honors the "mapping" config for DDR3; other standards always use their
-# default mapping.
-SUPPORTED_MAPPINGS: list[str] = [
-    "defaultmapping",
-    "row_interleaving",
-    "cacheline_interleaving",
-    "row_interleaving_randomized",
-    "cacheline_interleaving_randomized",
-]
+from .configs_data import (
+    _CHANNEL_WIDTHS,
+    _DATA_RATES,
+    _UNIT_MULTIPLIERS,
+    ORGANIZATIONS,
+    SPEED_GRADES,
+    SUPPORTED_STANDARDS,
+)
 
 
 def _standard_key(standard: str) -> str:
@@ -174,83 +25,6 @@ def _standard_key(standard: str) -> str:
     if standard.startswith("SALP"):
         return "SALP"
     return standard
-
-
-# Per-standard channel width in bits, used for capacity estimation.
-_CHANNEL_WIDTHS: dict[str, int] = {
-    "DDR3": 64,
-    "DDR4": 64,
-    "LPDDR3": 32,
-    "LPDDR4": 16,
-    "GDDR5": 32,
-    "WideIO": 128,
-    "WideIO2": 128,
-    "HBM": 128,
-    "SALP": 64,
-}
-
-# Minimum cacheline (bytes) per standard: prefetch size x channel width / 8.
-# Ramulator asserts that the cacheline is a multiple of this unit.
-MIN_CACHELINE: dict[str, int] = {
-    "DDR3": 64,
-    "DDR4": 64,
-    "LPDDR3": 32,
-    "LPDDR4": 32,
-    "GDDR5": 32,
-    "WideIO": 64,
-    "WideIO2": 64,
-    "HBM": 64,
-    "SALP": 64,
-}
-
-# Data rate in MT/s (mega-transfers per second) per speed grade prefix.
-# Used for theoretical bandwidth estimation.
-_DATA_RATES: dict[str, int] = {
-    "DDR3_800": 800,
-    "DDR3_1066": 1066,
-    "DDR3_1333": 1333,
-    "DDR3_1600": 1600,
-    "DDR3_1866": 1866,
-    "DDR3_2133": 2133,
-    "DDR4_1600": 1600,
-    "DDR4_1866": 1866,
-    "DDR4_2133": 2133,
-    "DDR4_2400": 2400,
-    "DDR4_3200": 3200,
-    "LPDDR3_1333": 1333,
-    "LPDDR3_1600": 1600,
-    "LPDDR3_1866": 1866,
-    "LPDDR3_2133": 2133,
-    "LPDDR4_1600": 1600,
-    "LPDDR4_2400": 2400,
-    "LPDDR4_3200": 3200,
-    "GDDR5_4000": 4000,
-    "GDDR5_4500": 4500,
-    "GDDR5_5000": 5000,
-    "GDDR5_5500": 5500,
-    "GDDR5_6000": 6000,
-    "GDDR5_6500": 6500,
-    "GDDR5_7000": 7000,
-    "WideIO_200": 200,
-    "WideIO_266": 266,
-    "WideIO2_800": 800,
-    "WideIO2_1066": 1066,
-    "HBM_1Gbps": 1000,
-    "SALP_800": 800,
-    "SALP_1066": 1066,
-    "SALP_1333": 1333,
-    "SALP_1600": 1600,
-    "SALP_1866": 1866,
-    "SALP_2133": 2133,
-}
-
-_UNIT_MULTIPLIERS: dict[str, int] = {
-    "": 1,
-    "K": 2**10,
-    "M": 2**20,
-    "G": 2**30,
-    "T": 2**40,
-}
 
 
 def _parse_org(org: str) -> tuple[int, int | None]:
@@ -284,10 +58,7 @@ def estimate_capacity(
     """
     density_bits, chip_width = _parse_org(org)
     channel_width = _CHANNEL_WIDTHS.get(_standard_key(standard), 64)
-    if chip_width:
-        chips_per_rank = channel_width // chip_width
-    else:
-        chips_per_rank = 1
+    chips_per_rank = channel_width // chip_width if chip_width else 1
     per_rank_bytes = density_bits // 8 * chips_per_rank
     return per_rank_bytes * ranks * channels
 
@@ -324,33 +95,14 @@ def theoretical_bandwidth(config: Mapping[str, object], cacheline: int = 64) -> 
 
 
 def config_dir() -> Path:
-    """Path to the reference Ramulator config files bundled with this package."""
-    try:
-        # Python >= 3.9: Traversable API; on scikit-build-core editable
-        # installs `files()` returns a MultiplexedPath spanning both the
-        # source tree and the installed copy, so the CMake-installed
-        # data/configs directory is always found.
-        from importlib.resources import files as _pkg_files
-    except ImportError:  # Python 3.8
-        _pkg_files = None  # type: ignore[assignment]
-    if _pkg_files is not None:
-        path = Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
-        if path.is_dir():
-            return path
-    # Python 3.8 fallback: locate the installed data directory by walking
-    # the package and interpreter search paths.
-    import sys
-    from importlib.util import find_spec
+    """Path to the reference Ramulator config files bundled with this package.
 
-    entries: list[str] = []
-    spec = find_spec("pyramulator")
-    if spec is not None and spec.submodule_search_locations:
-        entries.extend(spec.submodule_search_locations)
-    entries.extend(sys.path)
-    for entry in entries:
-        candidate = Path(entry).joinpath("data", "configs")
-        if candidate.is_dir():
-            return candidate
+    Uses :func:`importlib.resources.files` (stable since Python 3.10) so
+    the directory is found both in editable installs and in the wheel.
+    """
+    path = Path(str(_pkg_files("pyramulator").joinpath("data", "configs")))
+    if path.is_dir():
+        return path
     raise FileNotFoundError(
         "pyramulator data/configs not found (package data missing?)"
     )

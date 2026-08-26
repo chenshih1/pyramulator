@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.20)
 project(pyramulator LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -12,12 +12,38 @@ endif()
 # Emit per-function/per-data sections and let the linker drop the ones we
 # never call: the vendored simulator ships many standards/technologies the
 # wrapper can never exercise in a single run.
+# ---------------------------------------------------------------------------
+# Profile-Guided Optimization (PGO).
+#   PYRAMULATOR_PGO_MODE=OFF    — default, no PGO
+#   PYRAMULATOR_PGO_MODE=GENERATE — instrumented build for profile collection
+#   PYRAMULATOR_PGO_MODE=USE    — optimized build using collected profiles
+# ---------------------------------------------------------------------------
+set(PYRAMULATOR_PGO_MODE "OFF" CACHE STRING "PGO mode: OFF, GENERATE, or USE")
+set_property(CACHE PYRAMULATOR_PGO_MODE PROPERTY STRINGS OFF GENERATE USE)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-ffunction-sections -fdata-sections)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        add_compile_options(-march=native -mtune=native)
+    endif()
     if(APPLE)
         add_link_options("-Wl,-dead_strip")
     else()
         add_link_options("-Wl,--gc-sections")
+    endif()
+    # PGO flags (GCC/Clang on Linux; ignored on Apple in CI, kept simple)
+    if(NOT PYRAMULATOR_PGO_MODE STREQUAL "OFF")
+        if(NOT DEFINED PYRAMULATOR_PGO_DIR)
+            set(PYRAMULATOR_PGO_DIR "${CMAKE_BINARY_DIR}/pgo-data")
+        endif()
+        if(PYRAMULATOR_PGO_MODE STREQUAL "GENERATE")
+            file(MAKE_DIRECTORY ${PYRAMULATOR_PGO_DIR})
+            add_compile_options(-fprofile-generate=${PYRAMULATOR_PGO_DIR})
+            add_link_options(-fprofile-generate=${PYRAMULATOR_PGO_DIR})
+        elseif(PYRAMULATOR_PGO_MODE STREQUAL "USE")
+            add_compile_options(-fprofile-use=${PYRAMULATOR_PGO_DIR})
+            add_link_options(-fprofile-use=${PYRAMULATOR_PGO_DIR})
+        endif()
     endif()
 endif()
 
@@ -132,7 +158,7 @@ set(RAMULATOR_SOURCES
     ${RAMULATOR_SRC}/StatType.cpp
 )
 
-pybind11_add_module(_core src/bindings.cpp ${RAMULATOR_SOURCES})
+pybind11_add_module(_core cpp/bindings.cpp ${RAMULATOR_SOURCES})
 
 target_include_directories(_core PRIVATE ${RAMULATOR_SRC})
 target_compile_definitions(_core PRIVATE RAMULATOR)
@@ -140,9 +166,9 @@ target_compile_definitions(_core PRIVATE RAMULATOR)
 # Scope strict warnings to our own binding sources only; the vendored
 # simulator compiles with its own (unset) warning policy.
 if(MSVC)
-    set_source_files_properties(src/bindings.cpp PROPERTIES COMPILE_OPTIONS /W4)
+    set_source_files_properties(cpp/bindings.cpp PROPERTIES COMPILE_OPTIONS /W4)
 else()
-    set_source_files_properties(src/bindings.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+    set_source_files_properties(cpp/bindings.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 endif()
 
 # ramulator's StatType.h uses uintN_t without including <cstdint>; it

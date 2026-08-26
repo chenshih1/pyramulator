@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterable, Iterator
-from typing import Any, Callable, ClassVar, Literal, NamedTuple
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any, ClassVar, Literal, NamedTuple, TypeAlias
 
 from pyramulator._core import (
     Config as _Config,
@@ -26,14 +26,13 @@ from pyramulator._core import (
     RequestType,
 )
 from pyramulator.configs import (
-    MIN_CACHELINE,
     ORGANIZATIONS,
     SPEED_GRADES,
-    SUPPORTED_MAPPINGS,
     _standard_key,
     estimate_capacity,
     supported_standards,
 )
+from pyramulator.configs_data import MIN_CACHELINE, SUPPORTED_MAPPINGS
 from pyramulator.metrics import summarize_metrics
 
 logger = logging.getLogger(__name__)
@@ -44,14 +43,18 @@ class RequestInfo(NamedTuple):
 
     addr: int
     type: RequestType
-    arrive: int
-    depart: int
+    arrive_cycle: int
+    depart_cycle: int
     core_id: int = 0
 
     @property
     def latency(self) -> int:
         """Request latency in DRAM clock cycles."""
-        return self.depart - self.arrive
+        return self.depart_cycle - self.arrive_cycle
+
+
+CompletionCallback: TypeAlias = Callable[[RequestInfo], None] | None
+"""User-provided callback that receives a :class:`RequestInfo`."""
 
 
 class Config(_Config):
@@ -137,9 +140,9 @@ class Config(_Config):
 
         channels = int(self["channels"])
         ranks = int(self["ranks"])
-        if channels < 1 or (channels & (channels - 1)) != 0:
+        if channels < 1 or channels.bit_count() != 1:
             raise ValueError(f"channels must be a power of 2, got {channels}")
-        if ranks < 1 or (ranks & (ranks - 1)) != 0:
+        if ranks < 1 or ranks.bit_count() != 1:
             raise ValueError(f"ranks must be a power of 2, got {ranks}")
 
     def __repr__(self) -> str:
@@ -237,9 +240,9 @@ class MemorySystem:
 
     # -- Event collection (pull model) -------------------------------------
 
-    def _collect(self, addr, type_, arrive, depart, core_id) -> None:
+    def _collect(self, addr, type_, arrive_cycle, depart_cycle, core_id) -> None:
         self._collected.append(
-            RequestInfo(addr, RequestType(type_), arrive, depart, core_id)
+            RequestInfo(addr, RequestType(type_), arrive_cycle, depart_cycle, core_id)
         )
 
     def _check_core_id(self, core_id: int) -> None:
@@ -256,7 +259,7 @@ class MemorySystem:
         self,
         addr: int,
         core_id: int,
-        callback: Callable[[RequestInfo], None] | None,
+        callback: CompletionCallback,
     ) -> None:
         """Deliver the acceptance-time completion of an accepted WRITE.
 
@@ -268,21 +271,23 @@ class MemorySystem:
         elif self._collect_events:
             self._collect(addr, RequestType.WRITE, self.clk, self.clk, core_id)
 
-    def _read_cb(self, callback: Callable[[RequestInfo], None] | None):
+    def _read_cb(self, callback: CompletionCallback):
         """Callback to attach to a READ request for the C++ layer.
 
         A user callback is wrapped so it receives a :class:`RequestInfo`
-        (the C++ layer calls back with raw ``(addr, type, arrive, depart,
-        core_id)``).  Otherwise, in collect_events mode a collector
-        callback is attached so Ramulator records the completion events
-        that :meth:`completions` consumes; outside that mode ``None`` is
-        returned and no completions are recorded."""
+        (the C++ layer calls back with raw ``(addr, type, arrive_cycle,
+        depart_cycle, core_id)``).  Otherwise, in collect_events mode a
+        collector callback is attached so Ramulator records the completion
+        events that :meth:`completions` consumes; outside that mode
+        ``None`` is returned and no completions are recorded."""
         if callback is not None:
             user_cb = callback
 
-            def _wrap(addr_, type_, arrive, depart, core_id_):
+            def _wrap(addr_, type_, arrive_cycle, depart_cycle, core_id_):
                 user_cb(
-                    RequestInfo(addr_, RequestType(type_), arrive, depart, core_id_)
+                    RequestInfo(
+                        addr_, RequestType(type_), arrive_cycle, depart_cycle, core_id_
+                    )
                 )
 
             return _wrap
@@ -337,9 +342,9 @@ class MemorySystem:
         batch are still delivered, then the first exception is re-raised.
         """
         first_exc = None
-        for addr, type_, arrive, depart, core_id, cb in events:
+        for addr, type_, arrive_cycle, depart_cycle, core_id, cb in events:
             try:
-                cb(addr, type_, arrive, depart, core_id)
+                cb(addr, type_, arrive_cycle, depart_cycle, core_id)
             except BaseException as exc:
                 if first_exc is None:
                     first_exc = exc
@@ -403,12 +408,12 @@ class MemorySystem:
         addr: int,
         request_type: RequestType,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> bool:
         """Send a memory request. Returns True if accepted, False if queue full.
 
-        callback receives a RequestInfo(addr, type, arrive, depart, core_id)
-        namedtuple. Read completions are delivered by Ramulator itself.
+        callback receives a RequestInfo(addr, type, arrive_cycle, depart_cycle,
+        core_id) namedtuple. Read completions are delivered by Ramulator itself.
         Ramulator has no write-completion callback upstream (writes never
         enter its ``pending`` list), so WRITE callbacks fire immediately
         when the request is accepted; use ``flush()`` to wait until writes
@@ -428,7 +433,7 @@ class MemorySystem:
         self,
         addr: int,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> bool:
         """Send a READ request."""
         return self.send(addr, RequestType.READ, core_id, callback)
@@ -437,7 +442,7 @@ class MemorySystem:
         self,
         addr: int,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> bool:
         """Send a WRITE request."""
         return self.send(addr, RequestType.WRITE, core_id, callback)
@@ -446,7 +451,7 @@ class MemorySystem:
         self,
         addrs: Iterable[int],
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> list[bool]:
         """Send multiple READ requests in one C++ call. Returns accept flags.
 
@@ -464,7 +469,7 @@ class MemorySystem:
         self,
         addrs: Iterable[int],
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> list[bool]:
         """Send multiple WRITE requests in one C++ call. Returns accept flags.
 
@@ -473,7 +478,7 @@ class MemorySystem:
         addrs = list(addrs)
         self._check_core_id(core_id)
         accepted = list(self._impl.send_batch(addrs, RequestType.WRITE, core_id, None))
-        for addr, ok in zip(addrs, accepted):
+        for addr, ok in zip(addrs, accepted, strict=False):
             if ok:
                 self._fire_write_completion(addr, core_id, callback)
         return accepted
@@ -484,7 +489,7 @@ class MemorySystem:
         count: int,
         stride: int | None = None,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> list[bool]:
         """Send count READ requests at start, start+stride, ... in one call.
 
@@ -506,7 +511,7 @@ class MemorySystem:
         count: int,
         stride: int | None = None,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> list[bool]:
         """Send count WRITE requests at start, start+stride, ... in one call.
 
@@ -531,7 +536,7 @@ class MemorySystem:
         queue_depth: int = 32,
         batch: int = 100,
         max_cycles: int = 1_000_000,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> int:
         """Run the full drive loop inside C++ for a list of addresses.
 
@@ -555,7 +560,7 @@ class MemorySystem:
         queue_depth: int = 32,
         batch: int = 100,
         max_cycles: int = 1_000_000,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
     ) -> int:
         """Drive loop over a contiguous address range (start, +stride, ...).
 
@@ -600,7 +605,7 @@ class MemorySystem:
         addr: int,
         request_type: RequestType,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         max_wait: int = 1_000_000,
     ) -> int:
         """Send a request, ticking until it is accepted.
@@ -622,7 +627,7 @@ class MemorySystem:
         self,
         addr: int,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         max_wait: int = 1_000_000,
     ) -> int:
         """Blocking variant of send_read. Returns cycles waited."""
@@ -632,7 +637,7 @@ class MemorySystem:
         self,
         addr: int,
         core_id: int = 0,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         max_wait: int = 1_000_000,
     ) -> int:
         """Blocking variant of send_write. Returns cycles waited."""

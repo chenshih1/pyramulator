@@ -22,10 +22,9 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Iterable
-from functools import partial
 from typing import Any
 
-from ._memory import Config, MemorySystem, RequestInfo
+from ._engine import CompletionCallback, Config, MemorySystem, RequestInfo
 from .hardware import Clock, Component
 from .sim import Simulator
 
@@ -69,11 +68,11 @@ class Dram(Component):
                 f"idle_batch_cycles must be positive, got {idle_batch_cycles}"
             )
         self._idle_batch_cycles = idle_batch_cycles
+        self._current_idle_batch = idle_batch_cycles
+        self._max_idle_batch = idle_batch_cycles * 16
         self._idle_ticking = False
         self._idle_event_id: int | None = None
-        self._completed: deque[
-            tuple[RequestInfo, Callable[[RequestInfo], None] | None]
-        ] = deque()
+        self._completed: deque[tuple[RequestInfo, CompletionCallback]] = deque()
         if self._idle_refresh:
             self._start_idle_ticking()
 
@@ -104,7 +103,7 @@ class Dram(Component):
     def read(
         self,
         addr: int,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         core_id: int = 0,
     ) -> bool:
         """Send a READ request; True if accepted (False = queue full).
@@ -122,7 +121,7 @@ class Dram(Component):
     def write(
         self,
         addr: int,
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         core_id: int = 0,
     ) -> bool:
         """Send a WRITE request; True if accepted (False = queue full).
@@ -141,7 +140,7 @@ class Dram(Component):
     def reads(
         self,
         addrs: Iterable[int],
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         core_id: int = 0,
     ) -> list[bool]:
         """Send multiple READ requests in one engine call; returns accept flags.
@@ -156,7 +155,7 @@ class Dram(Component):
     def writes(
         self,
         addrs: Iterable[int],
-        callback: Callable[[RequestInfo], None] | None = None,
+        callback: CompletionCallback = None,
         core_id: int = 0,
     ) -> list[bool]:
         """Send multiple WRITE requests in one engine call; returns accept flags.
@@ -202,9 +201,7 @@ class Dram(Component):
 
     # -- internals -----------------------------------------------------------
 
-    def _collector(
-        self, callback: Callable[[RequestInfo], None] | None
-    ) -> Callable[[RequestInfo], None]:
+    def _collector(self, callback: CompletionCallback) -> Callable[[RequestInfo], None]:
         def on_complete(info: RequestInfo) -> None:
             self._completed.append((info, callback))
 
@@ -215,9 +212,18 @@ class Dram(Component):
         while self._completed:
             info, callback = self._completed.popleft()
             if callback is not None:
+                # Capture via default-arg to avoid late-binding surprises.
                 self.sim.schedule(
-                    0, partial(callback, info), priority=self._completion_priority
+                    0,
+                    self._make_completion_cb(callback, info),
+                    priority=self._completion_priority,
                 )
+
+    @staticmethod
+    def _make_completion_cb(
+        callback: Callable[[RequestInfo], None], info: RequestInfo
+    ) -> Callable[[], None]:
+        return lambda: callback(info)
 
     def _start_ticking(self) -> None:
         if self._ticking:
@@ -251,13 +257,18 @@ class Dram(Component):
 
     def _idle_tick(self) -> None:
         """Advance wall-clock time in batches while the DRAM is idle."""
-        self._mem.run(self._idle_batch_cycles)
+        self._mem.run(self._current_idle_batch)
         if self._mem.pending:
             # Defensive: a request appeared during the batch (impossible in
             # single-threaded DES) — hand back to the busy tick chain.
             self._idle_ticking = False
+            self._current_idle_batch = self._idle_batch_cycles
             self._start_ticking()
             return
+        # Exponential back-off: fewer events when the DRAM stays idle.
+        self._current_idle_batch = min(
+            self._current_idle_batch * 2, self._max_idle_batch
+        )
         self._idle_event_id = self.schedule_cycles(
-            self._idle_batch_cycles, self._idle_tick
+            self._current_idle_batch, self._idle_tick
         )

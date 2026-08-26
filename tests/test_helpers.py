@@ -5,18 +5,18 @@ from __future__ import annotations
 import pytest
 
 from pyramulator import (
-    addresses,
+    address_stream,
     avg_read_latency,
     benchmark_bandwidth,
     benchmark_latency,
-    read_write_mix,
     row_hit_rate,
+    split_read_write,
 )
-from pyramulator._memory import MemorySystem
+from pyramulator._engine import MemorySystem
 
 
 class TestMetrics:
-    def test_summary(self, ddr4_config):
+    def test_summary(self, ddr4_config) -> None:
         mem = MemorySystem(ddr4_config)
         mem.reset_stats()
         mem.send_reads_range(0, 32, 64)
@@ -27,7 +27,7 @@ class TestMetrics:
         assert m["bandwidth_gbs"] > 0
         assert 0.0 <= m["row_hit_rate"] <= 1.0
 
-    def test_metrics_no_finish_needed(self, ddr4_config):
+    def test_metrics_no_finish_needed(self, ddr4_config) -> None:
         """avg latency derived from raw sums, not the finish()-only field."""
         mem = MemorySystem(ddr4_config)
         mem.send_read(0x1000)
@@ -36,7 +36,7 @@ class TestMetrics:
         assert avg_read_latency(stats) > 0
         assert stats["read_latency_avg_0"] == 0  # ramulator leaves this 0
 
-    def test_row_hit_rate_sequential(self, ddr4_config):
+    def test_row_hit_rate_sequential(self, ddr4_config) -> None:
         mem = MemorySystem(ddr4_config)
         mem.send_reads_range(0, 64, 64)
         mem.run_until_idle()
@@ -44,43 +44,43 @@ class TestMetrics:
 
 
 class TestWorkload:
-    def test_sequential(self):
-        addrs = addresses("sequential", 4, cacheline=64)
+    def test_sequential(self) -> None:
+        addrs = address_stream("sequential", 4, cacheline=64)
         assert addrs == [0, 64, 128, 192]
 
-    def test_strided(self):
-        addrs = addresses("strided", 3, cacheline=64, start=1024, stride=256)
+    def test_strided(self) -> None:
+        addrs = address_stream("strided", 3, cacheline=64, start=1024, stride=256)
         assert addrs == [1024, 1280, 1536]
 
-    def test_random_deterministic(self):
-        a1 = addresses("random", 100, cacheline=64, seed=42)
-        a2 = addresses("random", 100, cacheline=64, seed=42)
+    def test_random_deterministic(self) -> None:
+        a1 = address_stream("random", 100, cacheline=64, seed=42)
+        a2 = address_stream("random", 100, cacheline=64, seed=42)
         assert a1 == a2
         assert all(a % 64 == 0 for a in a1)
 
-    def test_unknown_mode(self):
+    def test_unknown_mode(self) -> None:
         with pytest.raises(ValueError, match="unknown address mode"):
-            addresses("bogus", 4)
+            address_stream("bogus", 4)
 
-    def test_read_write_mix(self):
-        addrs = addresses("sequential", 100)
-        reads, writes = read_write_mix(addrs, write_fraction=0.25, seed=1)
+    def test_read_write_mix(self) -> None:
+        addrs = address_stream("sequential", 100)
+        reads, writes = split_read_write(addrs, write_fraction=0.25, seed=1)
         assert len(reads) + len(writes) == 100
         assert 0 < len(writes) < 100
 
 
 class TestBenchmarkHelpers:
-    def test_benchmark_latency(self, ddr4_config):
+    def test_benchmark_latency(self, ddr4_config) -> None:
         result = benchmark_latency(ddr4_config, num_requests=64)
         assert result["completed"] == 64
         assert 10 < result["avg"] < 500
 
-    def test_benchmark_bandwidth(self, ddr4_config):
+    def test_benchmark_bandwidth(self, ddr4_config) -> None:
         result = benchmark_bandwidth(ddr4_config, num_requests=64)
         assert result["completed"] == 64
         assert result["bandwidth_gbs"] > 1.0
 
-    def test_benchmark_all(self, ddr4_config):
+    def test_benchmark_all(self, ddr4_config) -> None:
         from pyramulator import benchmark_all
 
         result = benchmark_all(ddr4_config, num_requests=64)

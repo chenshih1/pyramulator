@@ -1,36 +1,41 @@
 ---
 name: Bug report
-about: Report a problem with pyramulator
-title: ""
+about: Create a report to help us improve
+title: ''
 labels: bug
+assignees: ''
 ---
 
-## Environment
+## Describe the bug
 
-- OS / Python version:
-- Installation method (git clone / sdist / wheel):
-- C++ compiler (if built locally):
+A clear and concise description of what the bug is.
 
-## Description
+## To Reproduce
 
-What did you expect to happen, and what actually happened?
+Steps to reproduce the behavior:
 
-## Reproduction
+1. Go to '...'
+2. Click on '....'
+3. Scroll down to '....'
+4. See error
 
-Minimal code to reproduce:
+## Minimal reproducible example
 
 ```python
-from pyramulator import Config, Dram, Simulator
-
-sim = Simulator()
-dram = Dram(sim, Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8"))
-dram.read(0x1000)
-sim.run_until_idle()
-...
+# Paste the smallest Python snippet that triggers the bug
 ```
 
 ## Expected behavior
 
-## Actual behavior
+A clear and concise description of what you expected to happen.
 
-(Include the full error message / traceback.)
+## Environment
+
+- pyramulator version:
+- Python version:
+- OS:
+- Compiler (if build-related):
+
+## Additional context
+
+Add any other context about the problem here.
