@@ -61,9 +61,14 @@ source = ["pyramulator"]
 show_missing = true
 skip_covered = true
 
+# Dynamic version: read from pyramulator/_version.py at build time
+# (single source of truth for the package version).
+[[tool.dynamic-metadata]]
+provider = "scikit_build_core.metadata.regex"
+field = "version"
+input = "pyramulator/_version.py"
+
 [tool.scikit-build]
-metadata.version.provider = "scikit_build_core.metadata.regex"
-metadata.version.input = "pyramulator/_version.py"
 cmake.version = ">=3.20,<4.0"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
