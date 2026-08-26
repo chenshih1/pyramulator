@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "pyramulator"
 dynamic = ["version"]
-description = "Discrete-event simulation for hardware architecture with a cycle-accurate DRAM model (Ramulator)"
+description = "Discrete-event simulation (DES) framework for hardware architecture with a cycle-accurate DRAM model (Ramulator)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
