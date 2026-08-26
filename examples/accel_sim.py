@@ -1,36 +1,46 @@
-"""Simple vector accelerator simulator with DRAM-side timing via pyramulator.
+"""Simple vector accelerator simulator, DES style.
 
-Models a multi-lane accelerator computing C[i] = A[i] + B[i].
-Each lane runs a 3-phase pipeline per tile:
+Models a multi-lane accelerator computing C[i] = A[i] + B[i] on the
+discrete-event framework. Each lane runs a 3-phase pipeline per tile:
+
   1. LOAD:    issue reads for A and B, wait for all to return
-  2. COMPUTE: fixed latency per element
-  3. STORE:   issue writes for C, wait for all to return
+  2. COMPUTE: fixed latency per element (an event delay)
+  3. STORE:   issue writes for C, barrier until truly serviced
 
-Demonstrates: multi-core traffic, backpressure, callbacks, latency measurement.
+Demonstrates: components and clocks, backpressure, event-driven issue,
+the write-acceptance semantics of the Dram component and its flush()
+barrier.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import deque
 
-from pyramulator import Config, MemorySystem
+from pyramulator import Clock, Component, Config, Dram, Simulator
 
 logger = logging.getLogger(__name__)
 
+HOST_PERIOD_PS = 1000  # 1 GHz accelerator clock
 
-class Accelerator:
+
+class Accelerator(Component):
     def __init__(
         self,
-        num_lanes=4,
-        vector_size=4096,
-        elem_size=8,
-        tile_size=64,
-        max_outstanding=32,
-        compute_cycles=4,
-        base_addr_a=0x0_0000,
-        base_addr_b=0x10_0000,
-        base_addr_c=0x20_0000,
+        sim: Simulator,
+        dram: Dram,
+        num_lanes: int = 4,
+        vector_size: int = 4096,
+        elem_size: int = 8,
+        tile_size: int = 64,
+        max_outstanding: int = 32,
+        compute_cycles: int = 4,
+        base_addr_a: int = 0x0_0000,
+        base_addr_b: int = 0x10_0000,
+        base_addr_c: int = 0x20_0000,
     ):
+        super().__init__(sim, Clock(HOST_PERIOD_PS, "host"), "accel")
+        self.dram = dram
         self.num_lanes = num_lanes
         self.vector_size = vector_size
         self.elem_size = elem_size
@@ -41,101 +51,109 @@ class Accelerator:
         self.base_addr_b = base_addr_b
         self.base_addr_c = base_addr_c
 
-        self.clk = 0
-        self.outstanding = 0
+        self.outstanding = 0  # requests in flight (global bound)
         self.read_latencies = []
         self.write_latencies = []
-        self.stall_cycles = 0
+        self.stalls = 0  # rejected issue attempts
+        self._lane = 0
+        self._tile_start = 0
+        self._tile_count = 0
+        self._pending: deque = deque()  # (addr, core_id) to issue
+        self._loads_outstanding = 0
 
-    def setup(self, dram_config: Config):
-        self.mem = MemorySystem(dram_config, cacheline=64, num_cores=self.num_lanes)
+    def _elems_per_lane(self) -> int:
+        return self.vector_size // self.num_lanes
 
-    def _wait_drain(self, max_cycles=500_000):
-        for _ in range(max_cycles):
-            self.mem.tick()
-            self.clk += 1
-            if self.outstanding == 0:
-                return
-        raise RuntimeError("drain timeout")
+    def _lane_base(self) -> int:
+        return self._lane * self._elems_per_lane() * self.elem_size
 
-    def _load_tile(self, lane, offset, count):
-        base_off = lane * (self.vector_size // self.num_lanes) * self.elem_size
+    def run(self) -> None:
+        """Run the full vector computation; drives the simulator to idle."""
+        self._next_tile()
+        self.sim.run_until_idle()
 
-        for i in range(count):
-            byte_off = base_off + (offset + i) * self.elem_size
+    def _next_tile(self) -> None:
+        """Advance (lane, tile) and start the next LOAD phase."""
+        while True:
+            if self._tile_start >= self._elems_per_lane():
+                self._tile_start = 0
+                self._lane += 1
+                if self._lane >= self.num_lanes:
+                    return  # done
+            self._tile_count = min(
+                self.tile_size, self._elems_per_lane() - self._tile_start
+            )
+            self._load_tile()
+            return
 
-            def on_read_done(info, _lane=lane):
-                self.outstanding -= 1
-                self.read_latencies.append(info.depart - info.arrive)
+    def _load_tile(self) -> None:
+        base = self._lane_base()
+        self._pending = deque()
+        for i in range(self._tile_count):
+            byte_off = base + (self._tile_start + i) * self.elem_size
+            self._pending.append((self.base_addr_a + byte_off, self._lane))
+            self._pending.append((self.base_addr_b + byte_off, self._lane))
+        self._loads_outstanding = 0
+        self._pump_loads()
 
-            while True:
-                if self.outstanding + 2 > self.max_outstanding:
-                    self.mem.tick()
-                    self.clk += 1
-                    self.stall_cycles += 1
-                    continue
-                ok_a = self.mem.send_read(
-                    self.base_addr_a + byte_off, core_id=lane, callback=on_read_done
-                )
-                ok_b = self.mem.send_read(
-                    self.base_addr_b + byte_off, core_id=lane, callback=on_read_done
-                )
-                if ok_a and ok_b:
-                    self.outstanding += 2
-                    break
-                self.mem.tick()
-                self.clk += 1
-                self.stall_cycles += 1
+    def _pump_loads(self) -> None:
+        while self._pending and self.outstanding < self.max_outstanding:
+            addr, lane = self._pending.popleft()
+            if not self.dram.read(
+                addr,
+                core_id=lane,
+                callback=lambda info, lane=lane: self._on_load_done(info, lane),
+            ):
+                self._pending.appendleft((addr, lane))
+                self.stalls += 1
+                break  # queue full; a completion will re-trigger the pump
+            self.outstanding += 1
+            self._loads_outstanding += 1
+        if not self._pending and self._loads_outstanding == 0:
+            # All loads for this tile are complete: compute, then store.
+            self.schedule_cycles(
+                self._tile_count * self.compute_cycles, self._store_tile
+            )
 
-        self._wait_drain()
+    def _on_load_done(self, info, lane: int) -> None:
+        self.outstanding -= 1
+        self._loads_outstanding -= 1
+        self.read_latencies.append(info.latency)
+        self._pump_loads()
 
-    def _store_tile(self, lane, offset, count):
-        base_off = lane * (self.vector_size // self.num_lanes) * self.elem_size
+    def _store_tile(self) -> None:
+        base = self._lane_base()
+        self._pending = deque()
+        for i in range(self._tile_count):
+            byte_off = base + (self._tile_start + i) * self.elem_size
+            self._pending.append((self.base_addr_c + byte_off, self._lane))
+        while self._pending:
+            addr, lane = self._pending.popleft()
+            if not self.dram.write(
+                addr,
+                core_id=lane,
+                callback=lambda info, lane=lane: self._on_store_done(info, lane),
+            ):
+                self._pending.appendleft((addr, lane))
+                self.stalls += 1
+                self.dram.flush()  # wait for the DRAM to make room
+        # All writes accepted; barrier until they are truly serviced.
+        self.dram.flush()
+        self._tile_start += self._tile_count
+        self._next_tile()
 
-        for i in range(count):
-            byte_off = base_off + (offset + i) * self.elem_size
+    def _on_store_done(self, info, lane: int) -> None:
+        self.outstanding -= 1
+        self.write_latencies.append(info.latency)
 
-            def on_write_done(info, _lane=lane):
-                self.outstanding -= 1
-                self.write_latencies.append(info.depart - info.arrive)
-
-            while True:
-                if self.outstanding >= self.max_outstanding:
-                    self.mem.tick()
-                    self.clk += 1
-                    self.stall_cycles += 1
-                    continue
-                if self.mem.send_write(
-                    self.base_addr_c + byte_off, core_id=lane, callback=on_write_done
-                ):
-                    self.outstanding += 1
-                    break
-                self.mem.tick()
-                self.clk += 1
-                self.stall_cycles += 1
-
-        self._wait_drain()
-
-    def run(self):
-        """Run the full vector computation across all lanes sequentially."""
-        elems_per_lane = self.vector_size // self.num_lanes
-
-        for lane in range(self.num_lanes):
-            for tile_start in range(0, elems_per_lane, self.tile_size):
-                count = min(self.tile_size, elems_per_lane - tile_start)
-                self._load_tile(lane, tile_start, count)
-                self.clk += count * self.compute_cycles
-                self._store_tile(lane, tile_start, count)
-
-        self.mem.finish()
-
-    def report(self):
-        tck = self.mem.tck
+    def report(self) -> None:
+        dram = self.dram
+        tck = dram.tck_ns
         total_reads = len(self.read_latencies)
         total_writes = len(self.write_latencies)
         total_requests = total_reads + total_writes
         bytes_moved = total_requests * 64
-        time_ns = self.clk * tck
+        time_ns = self.sim.now / 1000  # ps -> ns
         bandwidth = bytes_moved / (time_ns * 1e-9) / 1e9 if time_ns > 0 else 0
 
         avg_read_lat = sum(self.read_latencies) / total_reads if total_reads else 0
@@ -151,11 +169,11 @@ class Accelerator:
         logger.info("  Compute:         %d cyc/elem", self.compute_cycles)
         logger.info("  DRAM tck:        %.3f ns", tck)
         logger.info("-" * 60)
-        logger.info("  Total cycles:    %d", self.clk)
+        logger.info("  Total cycles:    %d", self.sim.now // HOST_PERIOD_PS)
         logger.info("  Sim time:        %.0f ns (%.4f ms)", time_ns, time_ns / 1e6)
         logger.info("  Reads:           %d", total_reads)
         logger.info("  Writes:          %d", total_writes)
-        logger.info("  Stall cycles:    %d", self.stall_cycles)
+        logger.info("  Stalls:          %d", self.stalls)
         logger.info(
             "  Avg read lat:    %.1f cyc (%.1f ns)", avg_read_lat, avg_read_lat * tck
         )
@@ -166,7 +184,7 @@ class Accelerator:
         logger.info("=" * 60)
 
 
-def main():
+def main() -> None:
     scenarios = [
         (
             "DDR4-2400 2ch, tile=64, depth=32",
@@ -240,8 +258,9 @@ def main():
 
     for label, dram_params, accel_params in scenarios:
         logger.info("--- %s ---", label)
-        accel = Accelerator(**accel_params)
-        accel.setup(Config(**dram_params))
+        sim = Simulator()
+        dram = Dram(sim, Config(**dram_params), num_cores=accel_params["num_lanes"])
+        accel = Accelerator(sim, dram, **accel_params)
         accel.run()
         accel.report()
         logger.info("")
