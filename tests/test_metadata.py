@@ -24,4 +24,4 @@ class TestVersionConsistency:
         assert pyramulator.__version__ == _version_file()
 
     def test_expected_version(self) -> None:
-        assert pyramulator.__version__ == "0.5.2"
+        assert pyramulator.__version__ == "0.5.3"
