@@ -424,6 +424,15 @@ class TestDrive:
         assert mem.pending == 0
         assert mem.get_stats()["read_requests"] == 64
 
+    def test_drive_twice_same_instance(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        first = mem.drive([i * 64 for i in range(32)])
+        second = mem.drive([i * 64 for i in range(32, 64)])
+        assert first == 32
+        assert second == 32
+        assert mem.pending == 0
+        assert mem.get_stats()["read_requests"] == 64
+
     def test_drive_max_cycles(self, ddr4_config) -> None:
         mem = MemorySystem(ddr4_config)
         issued = mem.drive_range(0, 100_000, 64, max_cycles=100)
@@ -445,6 +454,30 @@ class TestDrive:
         stats = mem.get_stats()
         assert isinstance(stats, dict)
         assert stats["read_requests"] == 1.0
+
+
+class TestTickUntilProgress:
+    def test_stops_on_completion(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        done = []
+        mem.send_read(0x1000, callback=done.append)
+        n = mem.tick_until_progress(1_000_000)
+        assert len(done) == 1
+        assert n == done[0].depart_cycle
+        assert mem.clk == n
+
+    def test_respects_max_cycles(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        mem.send_read(0x1000)
+        n = mem.tick_until_progress(3)
+        assert n == 3
+        assert mem.pending > 0
+        assert mem.clk == 3
+
+    def test_rejects_non_positive(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        with pytest.raises(ValueError, match="max_cycles"):
+            mem.tick_until_progress(0)
 
 
 class TestHBM:

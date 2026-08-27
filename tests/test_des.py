@@ -417,6 +417,54 @@ class TestDram:
         sim.run_until_idle()
         assert len(done) == 1
 
+    def test_completion_time_matches_depart_cycle(self) -> None:
+        sim, dram = _ddr4()
+        done: list[tuple[int, int]] = []
+
+        def on_complete(info):
+            done.append((sim.now, info.depart_cycle))
+
+        dram.read(0x1000, callback=on_complete)
+        sim.run_until_idle()
+        now, depart = done[0]
+        assert now == depart * dram.period_ps
+        assert dram.cycles == depart
+
+    def test_empty_cycles_coalesced(self) -> None:
+        """Idle DRAM cycles between completions are not simulator events."""
+        sim, dram = _ddr4()
+        done = []
+        dram.read(0x1000, callback=done.append)
+        sim.run_until_idle()
+        assert done[0].latency > 1
+        assert sim.processed < dram.cycles
+        assert sim.now == done[0].depart_cycle * dram.period_ps
+
+    def test_coalesce_does_not_skip_other_events(self) -> None:
+        sim, dram = _ddr4()
+        seen: list[tuple[str, int]] = []
+        dram.read(
+            0x1000,
+            callback=lambda info: seen.append(("read", sim.now)),
+        )
+        mid = 10 * dram.period_ps
+        sim.schedule(mid, lambda: seen.append(("host", sim.now)))
+        sim.run_until_idle()
+        assert seen[0] == ("host", mid)
+        assert seen[1][0] == "read"
+        assert seen[1][1] == dram.cycles * dram.period_ps
+        assert seen[1][1] > mid
+
+    def test_distinct_callbacks_not_confused(self) -> None:
+        sim, dram = _ddr4()
+        a: list = []
+        b: list = []
+        assert dram.read(0x1000, callback=a.append)
+        assert dram.read(0x2000, callback=b.append)
+        sim.run_until_idle()
+        assert [info.addr for info in a] == [0x1000]
+        assert [info.addr for info in b] == [0x2000]
+
 
 class TestSimulatorProfiling:
     def test_next_time(self) -> None:
@@ -442,6 +490,28 @@ class TestSimulatorProfiling:
         comp = Component(sim, clk, "core0")
         comp.schedule_cycles(1, lambda: None)
         assert sim.event_counts == {"core0": 1}
+
+
+class TestSimulatorAdvance:
+    def test_advance_to_empty(self) -> None:
+        sim = Simulator()
+        sim._advance_to(100)
+        assert sim.now == 100
+
+    def test_advance_to_rejects_past(self) -> None:
+        sim = Simulator()
+        sim.schedule(5, lambda: None)
+        sim.run()
+        with pytest.raises(ValueError, match="cannot advance"):
+            sim._advance_to(3)
+
+    def test_advance_to_rejects_skipping_event(self) -> None:
+        sim = Simulator()
+        sim.schedule(10, lambda: None)
+        sim._advance_to(10)  # landing on the next event is ok
+        assert sim.now == 10
+        with pytest.raises(RuntimeError, match="event pending"):
+            sim._advance_to(11)
 
 
 class TestPipeBackpressure:

@@ -218,6 +218,11 @@ public:
     template <typename Sender>
     py::tuple drive_loop(Sender send_one, long total, int queue_depth,
                          long batch, long max_cycles, py::object callback) {
+        // Reset per drive() invocation. Leaving this as a sticky member
+        // made the second call treat leftover completions as in-flight
+        // credits, skipped the drain loop, and returned with pending
+        // requests still in the controller.
+        completed_count_ = 0;
         std::function<void(Request &)> cb;
         if (!callback.is_none()) {
             cb = [this, callback](Request &r) {
@@ -364,6 +369,21 @@ public:
         return py::make_tuple(cycles, drain_completed());
     }
 
+    // Tick until a completion is recorded, the controller goes idle, or
+    // max_cycles is reached. Used by the DES Dram component to collapse
+    // empty DRAM cycles into one C++ call when no other simulator event
+    // falls in that window.
+    py::tuple run_until_progress(long max_cycles) {
+        long cycles = 0;
+        while (cycles < max_cycles) {
+            mem_->tick();
+            ++cycles;
+            if (!completed_.empty() || mem_->pending_requests() == 0)
+                break;
+        }
+        return py::make_tuple(cycles, drain_completed());
+    }
+
     void finish() { mem_->finish(); }
 
     int pending() const { return mem_->pending_requests(); }
@@ -456,6 +476,8 @@ PYBIND11_MODULE(_core, m) {
         .def("run", &PyMemorySystem::run, py::arg("cycles"))
         .def("run_until_idle", &PyMemorySystem::run_until_idle,
              py::arg("max_cycles") = 1000000)
+        .def("run_until_progress", &PyMemorySystem::run_until_progress,
+             py::arg("max_cycles"))
         .def("send", &PyMemorySystem::send,
              py::arg("addr"), py::arg("type"),
              py::arg("core_id") = 0, py::arg("callback") = py::none())

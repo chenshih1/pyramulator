@@ -227,6 +227,8 @@ class MemorySystem:
         self._num_cores = num_cores
         self._impl = _MemorySystem(config, cacheline, num_cores)
         self._clk = 0
+        self._read_cb_src: CompletionCallback = None
+        self._read_cb_wrap: Callable[..., None] | None = None
         logger.debug(
             "MemorySystem created: tck=%.3fns, cacheline=%d, cores=%d",
             self.tck,
@@ -263,19 +265,26 @@ class MemorySystem:
 
         A user callback is wrapped so it receives a :class:`RequestInfo`
         (the C++ layer calls back with raw ``(addr, type, arrive_cycle,
-        depart_cycle, core_id)``)."""
-        if callback is not None:
-            user_cb = callback
+        depart_cycle, core_id)``). The last wrapper is reused while the
+        user callback object is unchanged, so a tight issue loop does not
+        allocate a new Python function per request.
+        """
+        if callback is None:
+            return None
+        if callback is self._read_cb_src:
+            return self._read_cb_wrap
+        user_cb = callback
 
-            def _wrap(addr_, type_, arrive_cycle, depart_cycle, core_id_):
-                user_cb(
-                    RequestInfo(
-                        addr_, RequestType(type_), arrive_cycle, depart_cycle, core_id_
-                    )
+        def _wrap(addr_, type_, arrive_cycle, depart_cycle, core_id_):
+            user_cb(
+                RequestInfo(
+                    addr_, RequestType(type_), arrive_cycle, depart_cycle, core_id_
                 )
+            )
 
-            return _wrap
-        return None
+        self._read_cb_src = callback
+        self._read_cb_wrap = _wrap
+        return _wrap
 
     @property
     def tck(self) -> float:
@@ -340,6 +349,20 @@ class MemorySystem:
         one batch, so long runs avoid per-cycle Python overhead.
         """
         n, events = self._impl.run(cycles)
+        self._clk += n
+        self._dispatch(events)
+        return n
+
+    def tick_until_progress(self, max_cycles: int) -> int:
+        """Tick until a completion, idle, or *max_cycles*, whichever first.
+
+        Returns the number of DRAM cycles advanced (at least 1 when
+        *max_cycles* >= 1). Used by :class:`~pyramulator.dram.Dram` to
+        collapse empty DRAM cycles into one engine call.
+        """
+        if max_cycles < 1:
+            raise ValueError(f"max_cycles must be positive, got {max_cycles}")
+        n, events = self._impl.run_until_progress(max_cycles)
         self._clk += n
         self._dispatch(events)
         return n
