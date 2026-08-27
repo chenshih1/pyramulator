@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-08-27
+
+### Fixed
+
+- Moved `_core.pyi` to `pyramulator/_core.pyi` so type checkers can find it.
+- Typed `RequestType` enum members as `ClassVar[RequestType]` in the stub.
+- `MemorySystem.drive()` now converts `Iterable[int]` to `list[int]` before
+  passing to the C++ layer (prevents failures with generators).
+- Replaced runtime `assert` in `Dram._start_ticking()` with `RuntimeError`.
+- Fixed `theoretical_bandwidth()` config variable typing.
+
+### Added
+
+- Extreme simulation tests (`tests/test_extreme.py`).
+- Edge-case tests (`tests/test_edge_cases.py`).
+- HBM-specific tests (`tests/test_memory.py::TestHBM`).
+
 ## [0.5.1] - 2026-08-27
 
 ### Removed (internal engine cleanup)
@@ -196,6 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sustained request throughput ~150K req/s with per-request callbacks;
   DRAM simulation ~3.6M cycles/s single channel.
 
+[0.5.2]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.2
 [0.5.1]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/chenshih1/pyramulator/releases/tag/v0.4.0
