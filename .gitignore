@@ -16,6 +16,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Sphinx
+docs/_build/
+
 # CMake
 CMakeCache.txt
 CMakeFiles/

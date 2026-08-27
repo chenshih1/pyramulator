@@ -18,10 +18,11 @@ def address_stream(
     """Generate `count` cacheline-aligned addresses.
 
     Modes:
-      sequential - start, start+cacheline, start+2*cacheline, ...
-      strided    - start, start+stride, start+2*stride, ...
-      random     - uniform, cacheline-aligned addresses in [0, max_addr);
-                   deterministic for a given seed
+
+    - ``sequential`` - start, start+cacheline, start+2*cacheline, ...
+    - ``strided`` - start, start+stride, start+2*stride, ...
+    - ``random`` - uniform, cacheline-aligned addresses in [0, max_addr);
+      deterministic for a given seed
 
     Returns a list of ints, ready for ``send_reads`` / ``send_writes``.
     """

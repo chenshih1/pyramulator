@@ -39,11 +39,16 @@ jobs:
         run: |
           pip install -e ".[dev]"
       - name: Lint
-        run: ruff check pyramulator/ tests/ benchmarks/ examples/
+        run: ruff check pyramulator/ tests/ benchmarks/ examples/ scripts/
       - name: Format check
-        run: ruff format --check pyramulator/ tests/ benchmarks/ examples/
+        run: ruff format --check pyramulator/ tests/ benchmarks/ examples/ scripts/
       - name: Type check
         run: mypy pyramulator/
+      - name: Docs build
+        run: |
+          pip install sphinx
+          cd docs
+          sphinx-build -W -E -b html . _build
 
   sdist:
     name: sdist build

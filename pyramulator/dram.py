@@ -34,8 +34,8 @@ class Dram(Component):
 
     Examples:
         sim = Simulator()
-        dram = Dram(sim, Config(standard="DDR4", speed="DDR4_2400R",
-                                org="DDR4_4Gb_x8"))
+        cfg = Config(standard="DDR4", speed="DDR4_2400R", org="DDR4_4Gb_x8")
+        dram = Dram(sim, cfg)
         done = []
 
         def on_complete(info):
