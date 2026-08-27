@@ -439,6 +439,16 @@ class TestDrive:
         assert issued < 100_000  # 超时截断
         assert mem.clk <= 100
 
+    def test_drive_rejects_non_positive_batch(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        with pytest.raises(ValueError, match="batch"):
+            mem.drive([0, 64], batch=0)
+
+    def test_drive_rejects_non_positive_queue_depth(self, ddr4_config) -> None:
+        mem = MemorySystem(ddr4_config)
+        with pytest.raises(ValueError, match="queue_depth"):
+            mem.drive_range(0, 8, 64, queue_depth=0)
+
     def test_time_advancing_returns_cycles(self, ddr4_config) -> None:
         mem = MemorySystem(ddr4_config)
         assert mem.tick() == 1

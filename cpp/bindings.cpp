@@ -218,6 +218,10 @@ public:
     template <typename Sender>
     py::tuple drive_loop(Sender send_one, long total, int queue_depth,
                          long batch, long max_cycles, py::object callback) {
+        if (queue_depth < 1)
+            throw std::invalid_argument("queue_depth must be positive");
+        if (batch < 1)
+            throw std::invalid_argument("batch must be positive");
         // Reset per drive() invocation. Leaving this as a sticky member
         // made the second call treat leftover completions as in-flight
         // credits, skipped the drain loop, and returned with pending

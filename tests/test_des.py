@@ -132,6 +132,23 @@ class TestSimulator:
         assert sim.run() == 1
         assert sim.now == 5
 
+    def test_cancel_running_event_does_not_corrupt_pending(self) -> None:
+        """A callback that cancel()s itself must not double-decrement pending."""
+        sim = Simulator()
+        eid = [None]
+
+        def cb() -> None:
+            assert sim.cancel(eid[0]) is False
+            assert sim.pending == 1  # the later event is still queued
+
+        eid[0] = sim.schedule(0, cb)
+        sim.schedule(10, lambda: None)
+        sim.step()
+        assert sim.pending == 1
+        assert sim.run() == 1
+        assert sim.pending == 0
+        assert sim.now == 10
+
     def test_processed_counter(self) -> None:
         sim = Simulator()
         sim.schedule(0, lambda: None)
@@ -622,6 +639,32 @@ class TestDramIdleRefresh:
         sim.run(until=(before + extra) * dram.period_ps)
         # The last adaptive batch may overshoot by up to max_batch cycles.
         assert dram.cycles >= before + extra - max_batch
+
+    def test_backoff_resets_so_dram_cycles_track_wall_clock(self) -> None:
+        """After idle backoff grows, a busy stretch must not leave the next
+        idle event ticking a long batch over a short scheduled delay."""
+        sim, dram = self._idle_dram(batch=8)
+        period = dram.period_ps
+        # Let exponential backoff grow (8, 16, 32, 64, 128).
+        sim.run(until=200 * period)
+        assert dram._current_idle_batch > dram._idle_batch_cycles
+
+        done: list = []
+        assert dram.read(0x1000, callback=done.append)
+        # Completions are delta events after the tick that drained pending,
+        # so wait for the callback as well as the busy chain.
+        while not done or dram.pending or dram._ticking:
+            assert sim.step()
+        assert done
+        assert dram._idle_ticking
+        assert dram._current_idle_batch == dram._idle_batch_cycles
+
+        cycles_before = dram.cycles
+        now_before = sim.now
+        sim.step()  # first idle event after busy
+        d_cycles = dram.cycles - cycles_before
+        d_sim = (sim.now - now_before) // period
+        assert d_cycles == d_sim == dram._idle_batch_cycles
 
 
 class TestDramMultiChannel:
