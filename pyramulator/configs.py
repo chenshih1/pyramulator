@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from importlib.resources import files as _pkg_files
 from pathlib import Path
+from typing import Any
 
 from .configs_data import (
     _CHANNEL_WIDTHS,
@@ -71,12 +72,11 @@ def theoretical_bandwidth(config: Mapping[str, object], cacheline: int = 64) -> 
     """
     from . import Config  # late import to avoid a cycle with __init__
 
-    if isinstance(config, dict):
-        config = Config(**config)  # type: ignore[arg-type]
+    cfg: Any = Config(**config) if isinstance(config, dict) else config  # type: ignore[arg-type]
 
-    standard = str(config["standard"])
-    speed = str(config["speed"])
-    channels = int(str(config["channels"]))
+    standard = str(cfg["standard"])
+    speed = str(cfg["speed"])
+    channels = int(str(cfg["channels"]))
 
     key = _standard_key(standard)
     width_bits = _CHANNEL_WIDTHS.get(key, 64)

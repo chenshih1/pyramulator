@@ -536,7 +536,7 @@ class MemorySystem:
         Completions are dispatched through callback in one batch. Returns
         the number of issued requests."""
         n, issued, events = self._impl.drive(
-            addrs, queue_depth, batch, max_cycles, self._read_cb(callback)
+            list(addrs), queue_depth, batch, max_cycles, self._read_cb(callback)
         )
         self._clk += n
         self._dispatch(events)

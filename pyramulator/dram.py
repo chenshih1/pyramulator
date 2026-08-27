@@ -230,7 +230,8 @@ class Dram(Component):
             return
         if self._idle_ticking:
             self._idle_ticking = False
-            assert self._idle_event_id is not None
+            if self._idle_event_id is None:
+                raise RuntimeError("idle ticking without an event id")
             self.sim.cancel(self._idle_event_id)
         self._ticking = True
         self.schedule_cycles(1, self._tick)

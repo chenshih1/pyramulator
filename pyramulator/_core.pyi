@@ -1,27 +1,18 @@
-"""Type stubs for the C++ extension module ``pyramulator._core``.
-
-These are hand-written type signatures for the pybind11 bindings so that
-mypy and IDEs can understand the public API of the native extension
-without compiling it.
-"""
-
-from __future__ import annotations
-
-from typing import Any, Callable, overload
+from collections.abc import Callable
+from typing import Any, ClassVar, overload
 
 class RequestType:
-    """Request type constants exported from the C++ enum."""
+    READ: ClassVar[RequestType]
+    WRITE: ClassVar[RequestType]
+    REFRESH: ClassVar[RequestType]
+    POWERDOWN: ClassVar[RequestType]
+    SELFREFRESH: ClassVar[RequestType]
+    EXTENSION: ClassVar[RequestType]
 
-    READ: int
-    WRITE: int
-    REFRESH: int
-    POWERDOWN: int
-    SELFREFRESH: int
-    EXTENSION: int
+    @property
+    def value(self) -> int: ...
 
 class Config:
-    """Ramulator configuration wrapper."""
-
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -33,15 +24,15 @@ class Config:
     def __contains__(self, name: str) -> bool: ...
 
 class MemorySystem:
-    """Cycle-accurate DRAM engine (C++ wrapper)."""
-
     def __init__(
         self, config: Config, cacheline: int = 64, num_cores: int = 1
     ) -> None: ...
     def tick(self) -> None: ...
     def drain_completed(self) -> list[tuple[Any, ...]]: ...
     def run(self, cycles: int) -> tuple[int, list[tuple[Any, ...]]]: ...
-    def run_until_idle(self, max_cycles: int = 1000000) -> tuple[int, list[tuple[Any, ...]]]: ...
+    def run_until_idle(
+        self, max_cycles: int = 1000000
+    ) -> tuple[int, list[tuple[Any, ...]]]: ...
     def send(
         self,
         addr: int,
