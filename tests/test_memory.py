@@ -445,3 +445,37 @@ class TestDrive:
         stats = mem.get_stats()
         assert isinstance(stats, dict)
         assert stats["read_requests"] == 1.0
+
+
+class TestHBM:
+    """HBM-specific tests: the HBM standard uses a higher tCK and different
+    minimum cacheline (128 B) compared to DDR; verify basic operation."""
+
+    @pytest.fixture
+    def hbm_config(self) -> Config:
+        return Config(standard="HBM", speed="HBM_1Gbps", org="HBM_1Gb")
+
+    def test_create(self, hbm_config) -> None:
+        mem = MemorySystem(hbm_config)
+        assert mem.tck > 0
+        assert mem.clk == 0
+        assert mem.pending == 0
+
+    def test_tick_and_read(self, hbm_config) -> None:
+        mem = MemorySystem(hbm_config)
+        completed = []
+        mem.send_read(0x1000, callback=lambda i: completed.append(i))
+        mem.run_until_idle()
+        assert len(completed) == 1
+        assert completed[0].type == RequestType.READ
+        assert completed[0].latency >= 0
+
+    def test_batch_reads(self, hbm_config) -> None:
+        mem = MemorySystem(hbm_config)
+        completed = []
+        mem.send_reads(
+            range(0x1000, 0x1000 + 64 * 8, 64),
+            callback=lambda i: completed.append(i),
+        )
+        mem.run_until_idle()
+        assert len(completed) == 8
