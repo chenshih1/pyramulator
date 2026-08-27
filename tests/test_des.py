@@ -967,6 +967,35 @@ class TestDramPipeFifoCompose:
         assert engine._compute_stalls >= 1
         assert not engine._held_compute
 
+    def test_copy_engine_one_slot_issue_pipe_still_produces(self) -> None:
+        """Issue refill from the consumer cannot use the still-occupied slot.
+
+        ``Pipe._deliver`` decrements ``in_flight`` only after the consumer
+        returns True. Filling from ``_on_issue`` therefore sees a full
+        1-slot pipe and never pushes the replacement address; after
+        occupancy drops, nothing else is scheduled. The copy must still
+        complete all lines.
+        """
+        mod = _load_example("pipe_fifo_dram.py")
+        sim = Simulator()
+        dram = Dram(sim, Config(**DDR4_2400R_CFG))
+        n = 16
+        engine = mod.CopyEngine(
+            sim,
+            dram,
+            n_lines=n,
+            issue_slots=1,
+            issue_latency=1,
+            queue_depth=2,
+            max_outstanding=4,
+            compute_slots=4,
+        )
+        engine.run()
+        assert engine._produced == n
+        assert engine._writes_accepted == n
+        assert dram.pending == 0
+        assert engine.issue_pipe.in_flight == 0
+
     def test_on_load_put_survives_optimize(self) -> None:
         """``assert compute_pipe.put(...)`` would be compiled out under -O."""
         src = _EXAMPLES / "pipe_fifo_dram.py"

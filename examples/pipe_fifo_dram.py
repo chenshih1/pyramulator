@@ -97,14 +97,22 @@ class CopyEngine(Component):
             self._produced += 1
 
     def _on_issue(self, addr: int) -> bool:
-        """Pipe consumer: enqueue for DRAM, or stall the pipe if the FIFO is full."""
+        """Pipe consumer: enqueue for DRAM, or stall the pipe if the FIFO is full.
+
+        Do not call ``_fill_issue`` here. ``Pipe._deliver`` still counts this
+        item in ``in_flight`` until we return True, so ``can_put()`` is false
+        whenever the pipe is full (including a 1-slot pipe). Schedule a
+        zero-delay refill so it runs after occupancy drops; otherwise nothing
+        else pushes the next address and the copy can stop with
+        ``_produced < n_lines``.
+        """
         if not self.issue_q.put(addr):
             self._issue_stalls += 1
             return False
         if self.issue_q.level > self._fifo_high_water:
             self._fifo_high_water = self.issue_q.level
         self._pump_reads()
-        self._fill_issue()
+        self.schedule_ps(0, self._fill_issue)
         return True
 
     def _compute_reserved(self) -> int:

@@ -32,21 +32,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-<<<<<<< HEAD
 - `Dram` coalescing now clips empty-cycle bursts to the active
   `Simulator.run(until=)` horizon, not only the next heap event. An
   in-flight request no longer jumps `sim.now` past *until*, drops
   `dram.pending` to 0, and leaves the completion callback unfired.
   Incremental `run(until=)` windows and `idle_refresh` + `run(until=...)`
   stop at the requested time.
-=======
 - `examples/pipe_fifo_dram.py`: `_on_load` no longer treats
   `compute_pipe.put` as infallible because `compute_slots >=
   max_outstanding`. A completed load still occupies a compute slot after
   `_reads_inflight` drops, so the read pump reserves pipe occupancy and
   holds completions that find the pipe full. `put` is not inside
   `assert` (which `python -O` would strip, dropping stores).
->>>>>>> c49104a (fix: bound compute-pipe occupancy in the FIFO+Dram copy engine)
+- `examples/pipe_fifo_dram.py`: issue-pipe refill is a zero-delay event
+  after the consumer returns. Filling from `_on_issue` saw `can_put()`
+  false while the current item still counted toward `in_flight` (a
+  1-slot pipe never pushed the next address).
 - `MemorySystem.drive()` / `drive_range()` reset the in-flight completion
   counter at the start of each call, so a second drive on the same
   instance actually drains.
