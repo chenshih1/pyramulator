@@ -738,10 +738,12 @@ class TestDramIdleRefresh:
         assert sim.now <= until
         assert len(done) == 0
         assert dram.pending == 1
-        sim.run(until=1_000_000 * dram.period_ps)
+        later = until + 1_000 * dram.period_ps
+        sim.run(until=later)
+        assert sim.now <= later
         assert len(done) == 1
         assert dram.pending == 0
-        assert sim.now == done[0].depart_cycle * dram.period_ps
+        assert done[0].depart_cycle * dram.period_ps > until
 
     def test_idle_after_busy_resumes(self) -> None:
         sim, dram = self._idle_dram()

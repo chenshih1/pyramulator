@@ -158,9 +158,7 @@ class Simulator:
         if nxt is not None and nxt.time < time:
             raise RuntimeError(f"cannot advance to {time}: event pending at {nxt.time}")
         if self._run_until is not None and time > self._run_until:
-            raise RuntimeError(
-                f"cannot advance to {time}: run until {self._run_until}"
-            )
+            raise RuntimeError(f"cannot advance to {time}: run until {self._run_until}")
         self._now = time
 
     # -- execution -----------------------------------------------------------
