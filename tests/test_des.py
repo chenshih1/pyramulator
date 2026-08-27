@@ -100,6 +100,30 @@ class TestSimulator:
         assert sim.now == 4
         assert sim.pending == 1
 
+    def test_run_until_horizon_visible_during_run(self) -> None:
+        sim = Simulator()
+        seen: list[int | None] = []
+        sim.schedule(0, lambda: seen.append(sim._run_until))
+        assert sim._run_until is None
+        sim.run(until=100)
+        assert seen == [100]
+        assert sim._run_until is None
+
+    def test_run_until_horizon_restored_after_nested_run(self) -> None:
+        sim = Simulator()
+        seen: list[int | None] = []
+
+        def inner() -> None:
+            seen.append(sim._run_until)
+            sim.schedule(0, lambda: seen.append(sim._run_until))
+            sim.run(until=50)
+            seen.append(sim._run_until)
+
+        sim.schedule(0, inner)
+        sim.run(until=100)
+        assert seen == [100, 50, 100]
+        assert sim._run_until is None
+
     def test_run_max_events(self) -> None:
         sim = Simulator()
         for _ in range(10):
@@ -472,6 +496,76 @@ class TestDram:
         assert seen[1][1] == dram.cycles * dram.period_ps
         assert seen[1][1] > mid
 
+    def test_run_until_does_not_overshoot_in_flight_read(self) -> None:
+        """Coalescing must not jump now past run(until=) or complete early."""
+        sim, dram = _ddr4()
+        done = []
+        assert dram.read(0x1000, callback=done.append)
+        until = 5 * dram.period_ps
+        sim.run(until=until)
+        assert sim.now <= until
+        assert len(done) == 0
+        assert dram.pending == 1
+        sim.run_until_idle()
+        assert len(done) == 1
+        assert done[0].depart_cycle * dram.period_ps > until
+        assert sim.now == done[0].depart_cycle * dram.period_ps
+
+    def test_incremental_run_until_windows(self) -> None:
+        sim, dram = _ddr4()
+        done = []
+        assert dram.read(0x1000, callback=done.append)
+        period = dram.period_ps
+        completed_at: int | None = None
+        for i in range(1, 200):
+            until = i * period
+            sim.run(until=until)
+            assert sim.now <= until
+            if done:
+                completed_at = i
+                assert sim.now == done[0].depart_cycle * period
+                assert i >= done[0].depart_cycle
+                break
+            assert dram.pending == 1
+            assert dram.cycles <= i
+        assert completed_at is not None
+        assert len(done) == 1
+        assert dram.pending == 0
+
+    def test_run_until_past_completion_still_coalesces(self) -> None:
+        sim, dram = _ddr4()
+        done = []
+        dram.read(0x1000, callback=done.append)
+        sim.run(until=1_000_000 * dram.period_ps)
+        assert len(done) == 1
+        assert dram.pending == 0
+        assert sim.now == done[0].depart_cycle * dram.period_ps
+        assert sim.processed < dram.cycles
+
+    def test_run_until_inclusive_at_depart_cycle(self) -> None:
+        """A completion at exactly *until* must fire in that run."""
+        sim, dram = _ddr4()
+        done = []
+        dram.read(0x1000, callback=done.append)
+        sim.run_until_idle()
+        depart = done[0].depart_cycle
+        period = dram.period_ps
+
+        sim2, dram2 = _ddr4()
+        done2 = []
+        dram2.read(0x1000, callback=done2.append)
+        sim2.run(until=depart * period)
+        assert len(done2) == 1
+        assert sim2.now == depart * period
+
+        sim3, dram3 = _ddr4()
+        done3 = []
+        dram3.read(0x1000, callback=done3.append)
+        sim3.run(until=(depart - 1) * period)
+        assert len(done3) == 0
+        assert dram3.pending == 1
+        assert sim3.now <= (depart - 1) * period
+
     def test_distinct_callbacks_not_confused(self) -> None:
         sim, dram = _ddr4()
         a: list = []
@@ -529,6 +623,14 @@ class TestSimulatorAdvance:
         assert sim.now == 10
         with pytest.raises(RuntimeError, match="event pending"):
             sim._advance_to(11)
+
+    def test_advance_to_rejects_past_run_until(self) -> None:
+        sim = Simulator()
+        sim._run_until = 20
+        sim._advance_to(20)
+        assert sim.now == 20
+        with pytest.raises(RuntimeError, match="run until"):
+            sim._advance_to(21)
 
 
 class TestPipeBackpressure:
@@ -625,6 +727,21 @@ class TestDramIdleRefresh:
         sim.run(until=10_000 * dram.period_ps)
         assert len(done) == 1
         assert dram.pending == 0
+
+    def test_run_until_does_not_overshoot_busy(self) -> None:
+        """idle_refresh + run(until=) must still stop at the requested time."""
+        sim, dram = self._idle_dram()
+        done = []
+        assert dram.read(0x1000, callback=done.append)
+        until = 5 * dram.period_ps
+        sim.run(until=until)
+        assert sim.now <= until
+        assert len(done) == 0
+        assert dram.pending == 1
+        sim.run(until=1_000_000 * dram.period_ps)
+        assert len(done) == 1
+        assert dram.pending == 0
+        assert sim.now == done[0].depart_cycle * dram.period_ps
 
     def test_idle_after_busy_resumes(self) -> None:
         sim, dram = self._idle_dram()

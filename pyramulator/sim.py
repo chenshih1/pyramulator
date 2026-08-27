@@ -58,6 +58,7 @@ class Simulator:
         self._processed = 0
         self._live = 0
         self._sources: Counter[str | None] = Counter()
+        self._run_until: int | None = None
 
     # -- state ---------------------------------------------------------------
 
@@ -146,8 +147,9 @@ class Simulator:
     def _advance_to(self, time: int) -> None:
         """Jump *now* to *time* without processing events.
 
-        *time* must be >= now, and no pending event may fall strictly
-        before *time*. Used by :class:`~pyramulator.dram.Dram` to keep
+        *time* must be >= now, no pending event may fall strictly before
+        *time*, and *time* must not exceed the active :meth:`run`
+        horizon. Used by :class:`~pyramulator.dram.Dram` to keep
         simulator time aligned after coalescing empty DRAM cycles in C++.
         """
         if time < self._now:
@@ -155,6 +157,10 @@ class Simulator:
         nxt = self._peek()
         if nxt is not None and nxt.time < time:
             raise RuntimeError(f"cannot advance to {time}: event pending at {nxt.time}")
+        if self._run_until is not None and time > self._run_until:
+            raise RuntimeError(
+                f"cannot advance to {time}: run until {self._run_until}"
+            )
         self._now = time
 
     # -- execution -----------------------------------------------------------
@@ -186,18 +192,30 @@ class Simulator:
 
     def run(self, until: int | None = None, max_events: int | None = None) -> int:
         """Process events until the queue is empty, *until* (inclusive) is
-        reached, or *max_events* have run. Returns events processed."""
+        reached, or *max_events* have run. Returns events processed.
+
+        While this call is active, *until* is the inclusive time horizon
+        for coalesced jumps (see :meth:`_advance_to`). It is not a heap
+        event, so components that skip empty time must consult it
+        themselves — otherwise ``now`` can leap past *until* and
+        same-time completions would be left unfired.
+        """
         start = self._processed
-        while True:
-            if max_events is not None and self._processed - start >= max_events:
-                break
-            event = self._peek()
-            if event is None:
-                break
-            if until is not None and event.time > until:
-                break
-            heapq.heappop(self._heap)
-            self._fire(event)
+        prev_until = self._run_until
+        self._run_until = until
+        try:
+            while True:
+                if max_events is not None and self._processed - start >= max_events:
+                    break
+                event = self._peek()
+                if event is None:
+                    break
+                if until is not None and event.time > until:
+                    break
+                heapq.heappop(self._heap)
+                self._fire(event)
+        finally:
+            self._run_until = prev_until
         return self._processed - start
 
     def run_until_idle(self, max_events: int | None = None) -> int:
