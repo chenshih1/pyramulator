@@ -6,8 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `examples/pipe_fifo_dram.py` — architecture composition template:
+  `Pipe` + `FIFO` + `Dram` on two clocks, with Pipe-consumer backpressure
+  into a bounded issue FIFO and into `Dram.write`. Tests cover the same
+  wiring in `tests/test_des.py`.
+- README hardware-primitives snippet now wires `Pipe`/`FIFO` to `Dram`
+  (the previous snippet constructed them but never connected them).
+
 ### Changed
 
+- `docs/quickstart.rst` Python floor is 3.10 (was still 3.8 after 0.5.0).
+- `scripts/build_pgo.py` trains on `benchmarks/bench.py` (the 0.5.0
+  directory rename) and includes the new composition example.
 - `Dram` coalesces empty in-flight DRAM cycles into one C++
   `tick_until_progress` call when no other simulator event or
   `run(until=)` horizon falls in that window, then jumps simulator

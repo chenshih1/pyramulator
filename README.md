@@ -34,8 +34,10 @@ while requests are in flight, so an idle memory costs zero events.
   metrics
 - **Unmodified Ramulator** — only its public API is used, exactly like
   gem5's `Gem5Wrapper`; Ramulator is a pinned git submodule
-- **Fast** — the engine ticks in C++; events are batched across the
-  Python boundary (~150K req/s sustained with per-request callbacks)
+- **Fast** — empty in-flight DRAM cycles with no other pending simulator
+  events tick in C++ (`tick_until_progress`); completions stay Python
+  events at the cycle that made progress. ~150K req/s sustained with
+  per-request callbacks
 - **Helpers** — address-stream generators, one-call benchmarks, capacity
   estimation, theoretical bandwidth
 
@@ -106,30 +108,51 @@ sim.run()                                     # processes every event
 ## Hardware primitives
 
 ```python
-from pyramulator import Clock, Component, FIFO, Pipe
+from pyramulator import Clock, Component, Dram, FIFO, Pipe
 
-host = Clock(1000, "host")      # 1 GHz
+host = Clock(1000, "host")      # 1 GHz; Dram owns a second clock at tCK
 
 class MyCore(Component):
-    def __init__(self, sim, clk, name="core"):
+    def __init__(self, sim, clk, dram: Dram, name="core"):
         super().__init__(sim, clk, name)
+        self.dram = dram
         self.issue_q = FIFO(sim, clk, capacity=16)
         self.pipe = Pipe(sim, clk, latency_cycles=4, slots=2,
                          consumer=self._on_pipe_out)
+
+    def _on_pipe_out(self, addr) -> bool:
+        if not self.issue_q.put(addr):
+            return False          # stall the pipe; retried next cycle
+        self._pump()
+        return True
+
+    def _pump(self) -> None:
+        while self.issue_q.can_get():
+            addr = self.issue_q.peek()
+            if not self.dram.read(addr, callback=self._on_complete):
+                break             # DRAM queue full; a completion re-pumps
+            self.issue_q.get()
+
+    def _on_complete(self, info) -> None:
+        self._pump()              # DRAM made room
 ```
 
 - `Clock(period_ps, name)` — `clk.cycles(n)` converts cycle counts to
-  simulator time.
+  simulator time. Independent clocks (a 1 GHz core and a DDR4 tCK) share
+  one `Simulator`; time is integer picoseconds.
 - `FIFO(sim, clk, capacity)` — bounded, combinational (state changes
   immediately when the owning component processes an event); `put` /
-  `get` / `peek` / `can_put` / `can_get` / `clear`.
+  `get` / `peek` / `can_put` / `can_get` / `clear`. There is no implicit
+  wakeup: drain the FIFO from a `Pipe` consumer and from DRAM
+  completions (see `examples/pipe_fifo_dram.py`).
 - `Pipe(sim, clk, latency_cycles, slots, consumer)` — a fixed-latency
   pipeline stage with bounded occupancy; `put` returns False when full
   and delivers items to the consumer exactly `latency_cycles` later.
   A consumer returning `False` stalls the last stage: the item stays
   put and delivery is retried every cycle until accepted (any other
   return value, including `None`, accepts — existing consumers are
-  unaffected).
+  unaffected). Use that stall to backpressure into a full `FIFO` or a
+  `Dram.write` that returns False.
 
 ## Dram component
 
@@ -278,6 +301,11 @@ reported by `benchmarks/bench.py`.
 
 ## Examples
 
+- `examples/pipe_fifo_dram.py` — copy engine that composes `Pipe` +
+  `FIFO` + `Dram` on two clocks: issue-pipe backpressure into a bounded
+  FIFO, FIFO pump into `Dram.read`, compute-pipe stall on `Dram.write`
+  backpressure, drained with `run_until_idle()` (no nested `flush()`).
+  Run with `python examples/pipe_fifo_dram.py`.
 - `examples/spmm_hbm.py` — a naive single-PE SpMM accelerator streaming
   the dense matrix from an HBM timing model as DES components
   (event-driven issue loop with a bounded in-flight window, validated
@@ -296,7 +324,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"      # includes test, ruff, mypy, pytest-cov
 
-pytest                       # 144 tests
+pytest                       # 193 tests
 ruff check pyramulator/ tests/ benchmarks/ examples/
 mypy pyramulator/
 python benchmarks/bench.py
@@ -321,7 +349,7 @@ See [CHANGELOG.md](CHANGELOG.md).
   - `metrics.py` — derived performance metrics
   - `workload.py` — address-stream generators
   - `benchmark.py` — one-call latency/bandwidth benchmarks
-- `examples/` — runnable architecture examples (SpMM, vector accelerator)
+- `examples/` — runnable architecture examples (Pipe+FIFO+Dram composition, SpMM, vector accelerator)
 - `benchmarks/` — cross-standard latency/bandwidth benchmark script
 - `tests/` — pytest suite (engine, DES kernel, components)
 - `third_party/ramulator` — Ramulator as a git submodule (pinned commit), used unmodified

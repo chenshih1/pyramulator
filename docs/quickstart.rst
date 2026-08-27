@@ -4,7 +4,7 @@ Quick Start
 Install
 -------
 
-Build from source (requires Python >= 3.8 and a C++17 compiler):
+Build from source (requires Python >= 3.10 and a C++17 compiler):
 
 .. code-block:: bash
 

@@ -819,6 +819,63 @@ class TestDramFlushInCallback:
         assert events[1] == ("pending", 0)
 
 
+class TestDramPipeFifoCompose:
+    """Pipe + FIFO + Dram: the architecture-modeling composition the examples missed."""
+
+    def test_pipe_fifo_issues_reads(self) -> None:
+        sim, dram = _ddr4()
+        clk = Clock(1000, "host")
+        issue_q = FIFO(sim, clk, capacity=4, name="issue_q")
+        done: list[int] = []
+
+        def pump() -> None:
+            while issue_q.can_get():
+                addr = issue_q.peek()
+                if not dram.read(addr, callback=lambda info: done.append(info.addr)):
+                    break
+                issue_q.get()
+
+        def on_issue(addr: int) -> bool:
+            if not issue_q.put(addr):
+                return False
+            pump()
+            return True
+
+        pipe = Pipe(
+            sim, clk, latency_cycles=2, slots=2, consumer=on_issue, name="issue"
+        )
+        n = 8
+        for i in range(n):
+            while not pipe.can_put():
+                sim.step()
+            pipe.put(i * 64)
+        sim.run_until_idle()
+        assert sorted(done) == [i * 64 for i in range(n)]
+        assert dram.pending == 0
+        assert issue_q.empty and pipe.in_flight == 0
+
+    def test_store_pipe_stalls_on_dram_backpressure(self) -> None:
+        """A Pipe consumer returning False retries until Dram.write accepts."""
+        sim, dram = _ddr4()
+        clk = Clock(1000, "host")
+        accepted: list[int] = []
+
+        def try_store(addr: int) -> bool:
+            return dram.write(addr, callback=lambda info: accepted.append(info.addr))
+
+        pipe = Pipe(sim, clk, latency_cycles=1, slots=8, consumer=try_store)
+        # More writes than a typical DRAM write queue; some puts stall.
+        n = 64
+        for i in range(n):
+            while not pipe.can_put():
+                sim.step()
+            pipe.put(i * 64)
+        sim.run_until_idle()
+        assert sorted(accepted) == [i * 64 for i in range(n)]
+        assert dram.pending == 0
+        assert pipe.in_flight == 0
+
+
 class TestPipeFifoIntegration:
     def test_pipe_feeds_fifo(self) -> None:
         sim = Simulator()
