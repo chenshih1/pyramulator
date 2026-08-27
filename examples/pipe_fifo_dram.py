@@ -10,14 +10,20 @@ this one wires the public hardware primitives:
 Two clocks: the core at 1 GHz, the Dram at the DDR4 tCK. Backpressure is
 Pipe consumer ``False`` (retry every core cycle) plus ``Dram.read`` /
 ``Dram.write`` returning False (retry from the next completion or Pipe
-retry). The simulator is drained with ``run_until_idle()`` from outside
-the pipeline — not with a nested ``flush()`` from inside a callback.
+retry). A completing load still occupies a compute-pipe slot, so the
+read pump also stops when ``reads_inflight + compute in_flight`` would
+exceed the pipe; leftovers that find the pipe full are held and pushed
+once a store frees a slot. The simulator is drained with
+``run_until_idle()`` from outside the pipeline — not with a nested
+``flush()`` from inside a callback.
 
 Run:
     python examples/pipe_fifo_dram.py
 """
 
 from __future__ import annotations
+
+from collections import deque
 
 from pyramulator import FIFO, Clock, Component, Config, Dram, Pipe, Simulator
 
@@ -51,7 +57,9 @@ class CopyEngine(Component):
         self._writes_accepted = 0
         self._issue_stalls = 0
         self._store_stalls = 0
+        self._compute_stalls = 0
         self._fifo_high_water = 0
+        self._held_compute: deque[tuple[int, int]] = deque()
 
         self.issue_q = FIFO(sim, self.clk, capacity=queue_depth, name="issue_q")
         self.issue_pipe = Pipe(
@@ -62,7 +70,8 @@ class CopyEngine(Component):
             consumer=self._on_issue,
             name="issue_pipe",
         )
-        # Slots >= max_outstanding: every load completion can enter compute.
+        # A completing load still occupies a slot, so issue credits include
+        # pipe occupancy; slots need not be >= max_outstanding.
         self.compute_pipe = Pipe(
             sim,
             self.clk,
@@ -98,9 +107,33 @@ class CopyEngine(Component):
         self._fill_issue()
         return True
 
+    def _compute_reserved(self) -> int:
+        """Items that already occupy, or will occupy, a compute-pipe slot."""
+        return (
+            self._reads_inflight + self.compute_pipe.in_flight + len(self._held_compute)
+        )
+
+    def _drain_held_compute(self) -> None:
+        """Push completions that found the compute pipe full."""
+        while self._held_compute and self.compute_pipe.put(self._held_compute[0]):
+            self._held_compute.popleft()
+
     def _pump_reads(self) -> None:
-        """Issue queued reads until the DRAM or the in-flight window says no."""
-        while self.issue_q.can_get() and self._reads_inflight < self.max_outstanding:
+        """Issue queued reads until DRAM, the window, or compute occupancy says no.
+
+        ``max_outstanding`` caps DRAM reads in flight. It does not cap compute-pipe
+        occupancy: a completed load still holds a slot after ``_reads_inflight``
+        drops, so a further read can complete into a full pipe. Reserve a slot
+        at issue time (``_compute_reserved``) and hold any completion that
+        still sees ``put`` return False — ``put`` must not live in ``assert``
+        (``python -O`` would skip it and drop the store).
+        """
+        self._drain_held_compute()
+        while (
+            self.issue_q.can_get()
+            and self._reads_inflight < self.max_outstanding
+            and self._compute_reserved() < self.compute_pipe.slots
+        ):
             addr = self.issue_q.peek()
             if not self.dram.read(addr, callback=self._on_load):
                 break
@@ -109,7 +142,11 @@ class CopyEngine(Component):
 
     def _on_load(self, info) -> None:
         self._reads_inflight -= 1
-        assert self.compute_pipe.put((info.addr, self._dst(info.addr)))
+        item = (info.addr, self._dst(info.addr))
+        self._drain_held_compute()
+        if not self.compute_pipe.put(item):
+            self._held_compute.append(item)
+            self._compute_stalls += 1
         self._pump_reads()
 
     def _try_store(self, item: tuple[int, int]) -> bool:
@@ -122,6 +159,9 @@ class CopyEngine(Component):
 
     def _on_store_accepted(self, info) -> None:
         self._writes_accepted += 1
+        # Slot is already free: Pipe decrements in_flight before this delta
+        # callback. Drain held completions and issue the next reads.
+        self._pump_reads()
 
     def report(self) -> None:
         host_cycles = self.sim.now // HOST_PERIOD_PS
@@ -134,6 +174,7 @@ class CopyEngine(Component):
         print(f"  issue FIFO high:  {self._fifo_high_water}/{self.issue_q.capacity}")
         print(f"  issue stalls:     {self._issue_stalls}")
         print(f"  store stalls:     {self._store_stalls}")
+        print(f"  compute stalls:   {self._compute_stalls}")
         print(f"  dram events:      {self.sim.event_counts.get(self.dram.name, 0)}")
         print(f"  row hit rate:     {m['row_hit_rate']:.2f}")
         print(f"  bandwidth:        {m['bandwidth_gbs']:.2f} GB/s")
@@ -147,8 +188,12 @@ def main() -> None:
     )
     engine = CopyEngine(sim, dram)
     engine.run()
-    assert engine._writes_accepted == engine.n_lines
-    assert dram.pending == 0
+    if engine._writes_accepted != engine.n_lines:
+        raise RuntimeError(
+            f"copy dropped stores: {engine._writes_accepted} != {engine.n_lines}"
+        )
+    if dram.pending != 0:
+        raise RuntimeError(f"DRAM still pending: {dram.pending}")
     engine.report()
 
 
