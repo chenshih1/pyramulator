@@ -168,9 +168,12 @@ class Simulator:
     def _fire(self, event: _Event) -> None:
         self._live -= 1
         self._now = event.time
+        # Drop the id before the callback so cancel() of the running event
+        # returns False (it is no longer scheduled) and does not decrement
+        # pending a second time.
+        self._by_id.pop(event.seq, None)
         event.callback()
         self._processed += 1
-        self._by_id.pop(event.seq, None)
 
     def step(self) -> bool:
         """Advance to and process the next event; False if none remain."""

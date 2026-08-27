@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MemorySystem.drive()` / `drive_range()` reset the in-flight completion
   counter at the start of each call, so a second drive on the same
   instance actually drains.
+- `Dram` idle-refresh backoff now restarts after a busy stretch, so the
+  first idle event ticks the same number of DRAM cycles as it was
+  scheduled for (a grown batch previously ran over a short delay and
+  desynchronized `dram.cycles` from wall-clock time).
+- `MemorySystem.drive()` / `drive_range()` reject non-positive `batch` or
+  `queue_depth` (``batch=0`` with more requests than the queue depth
+  spun forever without ticking).
+- `Simulator.cancel()` of the currently running event returns False and
+  does not decrement ``pending`` a second time.
+- `split_read_write()` docstring now matches the independent random split
+  (it previously claimed writes were taken from the tail of the list).
 
 ## [0.5.2] - 2026-08-27
 

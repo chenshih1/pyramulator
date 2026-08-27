@@ -282,6 +282,11 @@ class Dram(Component):
         if self._idle_ticking:
             return
         self._idle_ticking = True
+        # Restart backoff so the first idle event after a busy stretch ticks
+        # the same number of DRAM cycles as it was scheduled for. Leaving a
+        # grown batch in place scheduled a short delay then ran the long
+        # batch, desynchronizing dram.cycles from wall-clock time.
+        self._current_idle_batch = self._idle_batch_cycles
         self._idle_event_id = self.schedule_cycles(
             self._idle_batch_cycles, self._idle_tick
         )

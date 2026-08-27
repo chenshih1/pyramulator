@@ -67,6 +67,8 @@ class TestWorkload:
         reads, writes = split_read_write(addrs, write_fraction=0.25, seed=1)
         assert len(reads) + len(writes) == 100
         assert 0 < len(writes) < 100
+        # Independent Bernoulli split, not "the tail of the list".
+        assert writes != addrs[-len(writes) :]
 
 
 class TestBenchmarkHelpers:

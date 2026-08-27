@@ -46,8 +46,8 @@ def split_read_write(
 ) -> tuple[list[int], list[int]]:
     """Split an address stream into (read_addrs, write_addrs).
 
-    Writes are taken from the tail of the list so consecutive addresses stay
-    contiguous in each stream."""
+    Each address is independently classified as a write with probability
+    *write_fraction* (deterministic for a given *seed*)."""
     rng = _random.Random(seed)
     reads, writes = [], []
     for addr in addrs:
