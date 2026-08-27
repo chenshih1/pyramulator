@@ -20,23 +20,19 @@ from collections.abc import Callable
 class _Event:
     """Heap entry ordered by (time, priority, seq) only."""
 
-    __slots__ = ("callback", "cancelled", "priority", "seq", "time")
+    __slots__ = ("callback", "cancelled", "key", "seq", "time")
 
     def __init__(
         self, time: int, priority: int, seq: int, callback: Callable[[], None]
     ) -> None:
         self.time = time
-        self.priority = priority
         self.seq = seq
+        self.key = (time, priority, seq)
         self.callback = callback
         self.cancelled = False
 
     def __lt__(self, other: _Event) -> bool:
-        return (self.time, self.priority, self.seq) < (
-            other.time,
-            other.priority,
-            other.seq,
-        )
+        return self.key < other.key
 
 
 class Simulator:
@@ -147,6 +143,20 @@ class Simulator:
             return True
         return False
 
+    def _advance_to(self, time: int) -> None:
+        """Jump *now* to *time* without processing events.
+
+        *time* must be >= now, and no pending event may fall strictly
+        before *time*. Used by :class:`~pyramulator.dram.Dram` to keep
+        simulator time aligned after coalescing empty DRAM cycles in C++.
+        """
+        if time < self._now:
+            raise ValueError(f"cannot advance to {time} < now {self._now}")
+        nxt = self._peek()
+        if nxt is not None and nxt.time < time:
+            raise RuntimeError(f"cannot advance to {time}: event pending at {nxt.time}")
+        self._now = time
+
     # -- execution -----------------------------------------------------------
 
     def _peek(self) -> _Event | None:
@@ -155,17 +165,20 @@ class Simulator:
             self._by_id.pop(dead.seq, None)
         return self._heap[0] if self._heap else None
 
+    def _fire(self, event: _Event) -> None:
+        self._live -= 1
+        self._now = event.time
+        event.callback()
+        self._processed += 1
+        self._by_id.pop(event.seq, None)
+
     def step(self) -> bool:
         """Advance to and process the next event; False if none remain."""
         event = self._peek()
         if event is None:
             return False
         heapq.heappop(self._heap)
-        self._live -= 1
-        self._now = event.time
-        event.callback()
-        self._processed += 1
-        self._by_id.pop(event.seq, None)
+        self._fire(event)
         return True
 
     def run(self, until: int | None = None, max_events: int | None = None) -> int:
@@ -180,7 +193,8 @@ class Simulator:
                 break
             if until is not None and event.time > until:
                 break
-            self.step()
+            heapq.heappop(self._heap)
+            self._fire(event)
         return self._processed - start
 
     def run_until_idle(self, max_events: int | None = None) -> int:

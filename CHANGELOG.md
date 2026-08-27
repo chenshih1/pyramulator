@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `Dram` coalesces empty in-flight DRAM cycles into one C++
+  `tick_until_progress` call when no other simulator event falls in that
+  window, then jumps simulator time to the cycle that made progress.
+  Completions are still delivered as zero-delay events at that cycle;
+  `RequestInfo`, backpressure, and event order relative to other
+  components are unchanged.
+- `Simulator.run()` no longer double-peeks the event heap per event;
+  heap ordering uses a stored `(time, priority, seq)` key.
+
+### Fixed
+
+- `MemorySystem.drive()` / `drive_range()` reset the in-flight completion
+  counter at the start of each call, so a second drive on the same
+  instance actually drains.
+
 ## [0.5.2] - 2026-08-27
 
 ### Fixed

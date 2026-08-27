@@ -33,6 +33,9 @@ class MemorySystem:
     def run_until_idle(
         self, max_cycles: int = 1000000
     ) -> tuple[int, list[tuple[Any, ...]]]: ...
+    def run_until_progress(
+        self, max_cycles: int
+    ) -> tuple[int, list[tuple[Any, ...]]]: ...
     def send(
         self,
         addr: int,

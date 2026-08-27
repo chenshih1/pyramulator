@@ -73,6 +73,8 @@ class Dram(Component):
         self._idle_ticking = False
         self._idle_event_id: int | None = None
         self._completed: deque[tuple[RequestInfo, CompletionCallback]] = deque()
+        self._collector_src: CompletionCallback = None
+        self._collector_wrap: Callable[[RequestInfo], None] | None = None
         if self._idle_refresh:
             self._start_idle_ticking()
 
@@ -202,9 +204,14 @@ class Dram(Component):
     # -- internals -----------------------------------------------------------
 
     def _collector(self, callback: CompletionCallback) -> Callable[[RequestInfo], None]:
+        if callback is self._collector_src and self._collector_wrap is not None:
+            return self._collector_wrap
+
         def on_complete(info: RequestInfo) -> None:
             self._completed.append((info, callback))
 
+        self._collector_src = callback
+        self._collector_wrap = on_complete
         return on_complete
 
     def _deliver_completed(self) -> None:
@@ -236,9 +243,32 @@ class Dram(Component):
         self._ticking = True
         self.schedule_cycles(1, self._tick)
 
+    def _max_tick_burst(self) -> int:
+        """How many DRAM cycles can run in C++ before the next sim event.
+
+        Cycle 0 is *now*. Cycle k would run at ``now + k * period``; we
+        only include k such that that time is strictly before the next
+        pending event, so coalescing cannot reorder or skip other work.
+        """
+        nxt = self.sim.next_time
+        if nxt is None:
+            return 1_000_000
+        dt = nxt - self.sim.now
+        if dt <= 0:
+            return 1
+        return (dt - 1) // self.clk.period_ps + 1
+
     def _tick(self) -> None:
-        """Advance the engine one DRAM cycle; reschedule while busy."""
-        self._mem.tick()
+        """Advance the engine; reschedule while busy.
+
+        Empty DRAM cycles with no other simulator events in between are
+        ticked in C++ in one call, then simulator time is jumped to the
+        cycle that made progress (a completion or idle). Completions are
+        still delivered as zero-delay events at that cycle's time.
+        """
+        n = self._mem.tick_until_progress(self._max_tick_burst())
+        if n > 1:
+            self.sim._advance_to(self.sim.now + (n - 1) * self.clk.period_ps)
         self._deliver_completed()
         if self._mem.pending:
             self.schedule_cycles(1, self._tick)
