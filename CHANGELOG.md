@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `Dram` coalesces empty in-flight DRAM cycles into one C++
-  `tick_until_progress` call when no other simulator event falls in that
-  window, then jumps simulator time to the cycle that made progress.
-  Completions are still delivered as zero-delay events at that cycle;
-  `RequestInfo`, backpressure, and event order relative to other
-  components are unchanged.
+  `tick_until_progress` call when no other simulator event or
+  `run(until=)` horizon falls in that window, then jumps simulator
+  time to the cycle that made progress. Completions are still
+  delivered as zero-delay events at that cycle; `RequestInfo`,
+  backpressure, and event order relative to other components are
+  unchanged.
 - `Simulator.run()` no longer double-peeks the event heap per event;
   heap ordering uses a stored `(time, priority, seq)` key.
 
 ### Fixed
 
+- `Dram` coalescing now clips empty-cycle bursts to the active
+  `Simulator.run(until=)` horizon, not only the next heap event. An
+  in-flight request no longer jumps `sim.now` past *until*, drops
+  `dram.pending` to 0, and leaves the completion callback unfired.
+  Incremental `run(until=)` windows and `idle_refresh` + `run(until=...)`
+  stop at the requested time.
 - `MemorySystem.drive()` / `drive_range()` reset the in-flight completion
   counter at the start of each call, so a second drive on the same
   instance actually drains.

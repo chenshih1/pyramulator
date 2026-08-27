@@ -244,27 +244,34 @@ class Dram(Component):
         self.schedule_cycles(1, self._tick)
 
     def _max_tick_burst(self) -> int:
-        """How many DRAM cycles can run in C++ before the next sim event.
+        """How many DRAM cycles can run in C++ before the next sim bound.
 
-        Cycle 0 is *now*. Cycle k would run at ``now + k * period``; we
-        only include k such that that time is strictly before the next
-        pending event, so coalescing cannot reorder or skip other work.
+        Cycle 0 is *now*. Cycle k would run at ``now + k * period``. Heap
+        events are exclusive — coalescing must not skip them. The active
+        ``Simulator.run(until=)`` horizon is inclusive, matching event
+        processing, so a cycle at exactly *until* is allowed.
         """
+        period = self.clk.period_ps
+        now = self.sim.now
+        n = 1_000_000
         nxt = self.sim.next_time
-        if nxt is None:
-            return 1_000_000
-        dt = nxt - self.sim.now
-        if dt <= 0:
-            return 1
-        return (dt - 1) // self.clk.period_ps + 1
+        if nxt is not None:
+            dt = nxt - now
+            n = 1 if dt <= 0 else min(n, (dt - 1) // period + 1)
+        until = self.sim._run_until
+        if until is not None:
+            dt = until - now
+            n = 1 if dt < 0 else min(n, dt // period + 1)
+        return n
 
     def _tick(self) -> None:
         """Advance the engine; reschedule while busy.
 
-        Empty DRAM cycles with no other simulator events in between are
+        Empty DRAM cycles with no other simulator bound in between are
         ticked in C++ in one call, then simulator time is jumped to the
-        cycle that made progress (a completion or idle). Completions are
-        still delivered as zero-delay events at that cycle's time.
+        cycle that made progress (a completion, idle, or the active
+        ``run(until=)`` horizon). Completions are still delivered as
+        zero-delay events at that cycle's time.
         """
         n = self._mem.tick_until_progress(self._max_tick_burst())
         if n > 1:
