@@ -6,8 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `examples/pipe_fifo_dram.py` — architecture composition template:
+  `Pipe` + `FIFO` + `Dram` on two clocks, with Pipe-consumer backpressure
+  into a bounded issue FIFO and into `Dram.write`. Tests cover the same
+  wiring in `tests/test_des.py`.
+- README hardware-primitives snippet now wires `Pipe`/`FIFO` to `Dram`
+  (the previous snippet constructed them but never connected them).
+
 ### Changed
 
+- `docs/quickstart.rst` Python floor is 3.10 (was still 3.8 after 0.5.0).
+- `scripts/build_pgo.py` trains on `benchmarks/bench.py` (the 0.5.0
+  directory rename) and includes the new composition example.
 - `Dram` coalesces empty in-flight DRAM cycles into one C++
   `tick_until_progress` call when no other simulator event or
   `run(until=)` horizon falls in that window, then jumps simulator
@@ -26,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dram.pending` to 0, and leaves the completion callback unfired.
   Incremental `run(until=)` windows and `idle_refresh` + `run(until=...)`
   stop at the requested time.
+- `examples/pipe_fifo_dram.py`: `_on_load` no longer treats
+  `compute_pipe.put` as infallible because `compute_slots >=
+  max_outstanding`. A completed load still occupies a compute slot after
+  `_reads_inflight` drops, so the read pump reserves pipe occupancy and
+  holds completions that find the pipe full. `put` is not inside
+  `assert` (which `python -O` would strip, dropping stores).
+- `examples/pipe_fifo_dram.py`: issue-pipe refill is a zero-delay event
+  after the consumer returns. Filling from `_on_issue` saw `can_put()`
+  false while the current item still counted toward `in_flight` (a
+  1-slot pipe never pushed the next address).
 - `MemorySystem.drive()` / `drive_range()` reset the in-flight completion
   counter at the start of each call, so a second drive on the same
   instance actually drains.

@@ -66,10 +66,10 @@ def phase_train(train_script: Path | None = None) -> None:
     print("\n=== Phase 2: comprehensive PGO training ===")
 
     # 1. Standard benchmarks (latency, bandwidth, channel scaling)
-    _train(train_script if train_script else ROOT / "bench" / "bench.py")
+    _train(train_script if train_script else ROOT / "benchmarks" / "bench.py")
 
-    # 2. Real-world architecture examples (SpMM, vector accelerator)
-    for example in ("spmm_hbm.py", "accel_sim.py"):
+    # 2. Real-world architecture examples (composition, SpMM, vector accelerator)
+    for example in ("pipe_fifo_dram.py", "spmm_hbm.py", "accel_sim.py"):
         path = ROOT / "examples" / example
         if path.exists():
             _train(path)

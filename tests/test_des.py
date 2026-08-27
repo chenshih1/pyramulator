@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from pyramulator import (
@@ -15,6 +18,17 @@ from pyramulator import (
     Simulator,
 )
 from tests.conftest import DDR4_2400R_CFG
+
+_EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+
+def _load_example(filename: str):
+    path = _EXAMPLES / filename
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class TestSimulator:
@@ -817,6 +831,189 @@ class TestDramFlushInCallback:
         sim.run_until_idle()
         assert events[0][0] == "flushed" and events[0][1] > 0
         assert events[1] == ("pending", 0)
+
+
+class TestDramPipeFifoCompose:
+    """Pipe + FIFO + Dram: the architecture-modeling composition the examples missed."""
+
+    def test_pipe_fifo_issues_reads(self) -> None:
+        sim, dram = _ddr4()
+        clk = Clock(1000, "host")
+        issue_q = FIFO(sim, clk, capacity=4, name="issue_q")
+        done: list[int] = []
+
+        def pump() -> None:
+            while issue_q.can_get():
+                addr = issue_q.peek()
+                if not dram.read(addr, callback=lambda info: done.append(info.addr)):
+                    break
+                issue_q.get()
+
+        def on_issue(addr: int) -> bool:
+            if not issue_q.put(addr):
+                return False
+            pump()
+            return True
+
+        pipe = Pipe(
+            sim, clk, latency_cycles=2, slots=2, consumer=on_issue, name="issue"
+        )
+        n = 8
+        for i in range(n):
+            while not pipe.can_put():
+                sim.step()
+            pipe.put(i * 64)
+        sim.run_until_idle()
+        assert sorted(done) == [i * 64 for i in range(n)]
+        assert dram.pending == 0
+        assert issue_q.empty and pipe.in_flight == 0
+
+    def test_store_pipe_stalls_on_dram_backpressure(self) -> None:
+        """A Pipe consumer returning False retries until Dram.write accepts."""
+        sim, dram = _ddr4()
+        clk = Clock(1000, "host")
+        accepted: list[int] = []
+
+        def try_store(addr: int) -> bool:
+            return dram.write(addr, callback=lambda info: accepted.append(info.addr))
+
+        pipe = Pipe(sim, clk, latency_cycles=1, slots=8, consumer=try_store)
+        # More writes than a typical DRAM write queue; some puts stall.
+        n = 64
+        for i in range(n):
+            while not pipe.can_put():
+                sim.step()
+            pipe.put(i * 64)
+        sim.run_until_idle()
+        assert sorted(accepted) == [i * 64 for i in range(n)]
+        assert dram.pending == 0
+        assert pipe.in_flight == 0
+
+    def test_copy_engine_completes_when_compute_occupies_slots(self) -> None:
+        """compute_slots >= max_outstanding does not bound pipe occupancy.
+
+        A completed load still occupies a compute slot after inflight
+        decrements; without reserving that occupancy, later completions
+        find the pipe full. A long compute latency makes the fill visible.
+        """
+        mod = _load_example("pipe_fifo_dram.py")
+        sim = Simulator()
+        dram = Dram(sim, Config(**DDR4_2400R_CFG, channels=2))
+        n = 64
+        engine = mod.CopyEngine(
+            sim,
+            dram,
+            n_lines=n,
+            compute_slots=16,
+            max_outstanding=16,
+            compute_latency=64,
+        )
+        reserved_peak = [0]
+        orig_on_load = engine._on_load
+
+        def on_load(info) -> None:
+            orig_on_load(info)
+            reserved_peak[0] = max(reserved_peak[0], engine._compute_reserved())
+            assert engine.compute_pipe.in_flight <= engine.compute_pipe.slots
+
+        engine._on_load = on_load
+        engine.run()
+        assert engine._writes_accepted == n
+        assert dram.pending == 0
+        assert engine.compute_pipe.in_flight == 0
+        assert not engine._held_compute
+        assert reserved_peak[0] <= engine.compute_pipe.slots
+
+    def test_copy_engine_narrow_compute_pipe(self) -> None:
+        """Fewer compute slots than outstanding reads must still drain."""
+        mod = _load_example("pipe_fifo_dram.py")
+        sim = Simulator()
+        dram = Dram(sim, Config(**DDR4_2400R_CFG, channels=2))
+        n = 32
+        engine = mod.CopyEngine(
+            sim,
+            dram,
+            n_lines=n,
+            compute_slots=2,
+            max_outstanding=16,
+            compute_latency=32,
+        )
+        engine.run()
+        assert engine._writes_accepted == n
+        assert dram.pending == 0
+        assert not engine._held_compute
+
+    def test_copy_engine_holds_when_put_returns_false(self) -> None:
+        """A False put must hold the completion, not drop the store."""
+        mod = _load_example("pipe_fifo_dram.py")
+        sim = Simulator()
+        dram = Dram(sim, Config(**DDR4_2400R_CFG))
+        engine = mod.CopyEngine(
+            sim, dram, n_lines=8, compute_slots=4, max_outstanding=4
+        )
+        real_put = engine.compute_pipe.put
+        remaining_fails = [2]
+
+        def flaky_put(item):
+            if remaining_fails[0] and engine.compute_pipe.can_put():
+                remaining_fails[0] -= 1
+                return False
+            return real_put(item)
+
+        engine.compute_pipe.put = flaky_put
+        engine.run()
+        assert remaining_fails[0] == 0
+        assert engine._writes_accepted == 8
+        assert engine._compute_stalls >= 1
+        assert not engine._held_compute
+
+    def test_copy_engine_one_slot_issue_pipe_still_produces(self) -> None:
+        """Issue refill from the consumer cannot use the still-occupied slot.
+
+        ``Pipe._deliver`` decrements ``in_flight`` only after the consumer
+        returns True. Filling from ``_on_issue`` therefore sees a full
+        1-slot pipe and never pushes the replacement address; after
+        occupancy drops, nothing else is scheduled. The copy must still
+        complete all lines.
+        """
+        mod = _load_example("pipe_fifo_dram.py")
+        sim = Simulator()
+        dram = Dram(sim, Config(**DDR4_2400R_CFG))
+        n = 16
+        engine = mod.CopyEngine(
+            sim,
+            dram,
+            n_lines=n,
+            issue_slots=1,
+            issue_latency=1,
+            queue_depth=2,
+            max_outstanding=4,
+            compute_slots=4,
+        )
+        engine.run()
+        assert engine._produced == n
+        assert engine._writes_accepted == n
+        assert dram.pending == 0
+        assert engine.issue_pipe.in_flight == 0
+
+    def test_on_load_put_survives_optimize(self) -> None:
+        """``assert compute_pipe.put(...)`` would be compiled out under -O."""
+        src = _EXAMPLES / "pipe_fifo_dram.py"
+        code = compile(src.read_text(), str(src), "exec", optimize=2)
+
+        def find(c, name):
+            if c.co_name == name:
+                return c
+            for const in c.co_consts:
+                if hasattr(const, "co_name"):
+                    found = find(const, name)
+                    if found is not None:
+                        return found
+            return None
+
+        on_load = find(code, "_on_load")
+        assert on_load is not None
+        assert "put" in on_load.co_names
 
 
 class TestPipeFifoIntegration:
